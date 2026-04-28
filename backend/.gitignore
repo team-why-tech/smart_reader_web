@@ -1,0 +1,36 @@
+# .gitignore for SmreaderAPI
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.vs/
+.vscode/
+logs/
+
+## NuGet
+*.nupkg
+**/packages/*
+
+## Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+build/
+bld/
+
+## IDE
+.idea/
+*.swp
+*.swo
+
+## OS
+Thumbs.db
+.DS_Store
+
+## Environment
+.env
+appsettings.*.local.json

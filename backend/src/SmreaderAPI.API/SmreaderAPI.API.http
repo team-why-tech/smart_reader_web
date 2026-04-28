@@ -1,0 +1,6 @@
+@SmreaderAPI.API_HostAddress = http://localhost:5291
+
+GET {{SmreaderAPI.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
