@@ -23,7 +23,11 @@ public class AuditLogController : ControllerBase
         var result = await _auditService.GetAllAsync();
         return Ok(result);
     }
-
+    /// <summary>   
+    /// Gets audit logs for a specific user.
+    /// </summary>
+    /// <param name="userId">The ID of the user.</param>
+    /// <returns>A list of audit logs for the specified user.</returns>
     [HttpGet("user/{userId}")]
     public async Task<IActionResult> GetByUser(int userId)
     {
