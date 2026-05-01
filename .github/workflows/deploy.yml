@@ -2,8 +2,8 @@ name: Deploy Backend API
 
 on:
   push:
-    paths:
-      - 'backend/**'
+    # paths:
+    #   - 'backend/**'
     branches:
       - main
 
@@ -31,7 +31,7 @@ jobs:
         username: ${{ secrets.VPS_USER }}
         key: ${{ secrets.VPS_SSH_KEY }}
         source: "backend/publish/*"
-        target: "/home/smreader/donetapi"
+        target: "/home/smreader/dotnetapi"
 
     - name: Restart API
       uses: appleboy/ssh-action@v1.0.3
@@ -40,4 +40,4 @@ jobs:
         username: ${{ secrets.VPS_USER }}
         key: ${{ secrets.VPS_SSH_KEY }}
         script: |
-          sudo systemctl restart donetapi
+          sudo systemctl restart dotnetapi
