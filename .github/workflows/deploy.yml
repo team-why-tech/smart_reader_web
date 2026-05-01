@@ -1,37 +1,39 @@
-name: Deploy .NET API to VPS
+name: Deploy Backend API
 
 on:
   push:
+    paths:
+      - 'backend/**'
     branches:
       - main
 
 jobs:
-  build-deploy:
+  deploy-backend:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+    - uses: actions/checkout@v3
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: 9.0.x
+        dotnet-version: 8.0.x
 
-    - name: Publish self-contained app
+    - name: Publish API
       run: |
+        cd backend
         dotnet publish -c Release -r linux-x64 --self-contained true -o publish
 
-    - name: Copy files to VPS
+    - name: Copy to VPS
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.VPS_HOST }}
         username: ${{ secrets.VPS_USER }}
         key: ${{ secrets.VPS_SSH_KEY }}
-        source: "publish/*"
-        target: "/home/username/donetapi"
+        source: "backend/publish/*"
+        target: "/home/smreader/donetapi"
 
-    - name: Restart service
+    - name: Restart API
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.VPS_HOST }}
