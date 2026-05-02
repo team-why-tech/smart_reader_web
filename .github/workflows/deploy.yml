@@ -25,15 +25,6 @@ jobs:
         dotnet clean
         dotnet restore
         dotnet publish -c Release -r linux-x64 --self-contained true -o publish
-        
-    - name: Clean remote directory
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.VPS_HOST }}
-        username: ${{ secrets.VPS_USER }}
-        key: ${{ secrets.VPS_SSH_KEY }}
-        script: |
-          rm -rf /home/gdhhsxmy/dotnetapi/*
 
     - name: Copy to VPS
       uses: appleboy/scp-action@v0.1.7
