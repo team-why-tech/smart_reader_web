@@ -1,38 +1,54 @@
-- name: Setup .NET
-  uses: actions/setup-dotnet@v4
-  with:
-    dotnet-version: 8.0.x
+name: Deploy Backend API
 
-- name: Publish API
-  run: |
-    cd backend
-    dotnet clean
-    dotnet restore
-    dotnet publish -c Release -r linux-x64 --self-contained true -o publish
+on:
+  push:
+    # paths:
+    #   - 'backend/**'
+    branches:
+      - main
 
-- name: Clean remote directory
-  uses: appleboy/ssh-action@v1.0.3
-  with:
-    host: ${{ secrets.VPS_HOST }}
-    username: ${{ secrets.VPS_USER }}
-    key: ${{ secrets.VPS_SSH_KEY }}
-    script: |
-      rm -rf /home/gdhhsxmy/dotnetapi/*
+jobs:
+  deploy-backend:
+    runs-on: ubuntu-latest
 
-- name: Copy to VPS
-  uses: appleboy/scp-action@v0.1.7
-  with:
-    host: ${{ secrets.VPS_HOST }}
-    username: ${{ secrets.VPS_USER }}
-    key: ${{ secrets.VPS_SSH_KEY }}
-    source: "backend/publish/*"
-    target: "/home/gdhhsxmy/dotnetapi"
+    steps:
+    - uses: actions/checkout@v3
 
-- name: Restart API
-  uses: appleboy/ssh-action@v1.0.3
-  with:
-    host: ${{ secrets.VPS_HOST }}
-    username: ${{ secrets.VPS_USER }}
-    key: ${{ secrets.VPS_SSH_KEY }}
-    script: |
-      sudo systemctl restart dotnetapi
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+
+    - name: Publish API
+      run: |
+        cd backend
+        dotnet clean
+        dotnet restore
+        dotnet publish -c Release -r linux-x64 --self-contained true -o publish
+        
+    - name: Clean remote directory
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USER }}
+        key: ${{ secrets.VPS_SSH_KEY }}
+        script: |
+          rm -rf /home/gdhhsxmy/dotnetapi/*
+
+    - name: Copy to VPS
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USER }}
+        key: ${{ secrets.VPS_SSH_KEY }}
+        source: "backend/publish/*"
+        target: "/home/gdhhsxmy/dotnetapi"
+
+    - name: Restart API
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USER }}
+        key: ${{ secrets.VPS_SSH_KEY }}
+        script: |
+          sudo systemctl restart dotnetapi
