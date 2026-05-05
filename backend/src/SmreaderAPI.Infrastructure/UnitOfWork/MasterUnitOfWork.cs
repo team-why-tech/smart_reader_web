@@ -2,28 +2,25 @@ using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using SmreaderAPI.Domain.Interfaces;
-using SmreaderAPI.Infrastructure.Data;
-using SmreaderAPI.Infrastructure.Repositories;
-using SmreaderAPI.Infrastructure.Tenancy;
+using SmreaderAPI.Domain.Interfaces.Master;
+using SmreaderAPI.Infrastructure.Data.Master;
+using SmreaderAPI.Infrastructure.Repositories.Master;
 
 namespace SmreaderAPI.Infrastructure.UnitOfWork;
 
-/// <summary>
-/// Unit of work for tenant database operations (uses dynamic tenant connection)
-/// </summary>
-public class UnitOfWork : IUnitOfWork
+public class MasterUnitOfWork : IMasterUnitOfWork
 {
-    private readonly SmreaderDbContext _dbContext;
-    private readonly TenantDapperContext _dapperContext;
+    private readonly MasterDbContext _dbContext;
+    private readonly MasterDapperContext _dapperContext;
     private IDbConnection? _connection;
     private IDbTransaction? _transaction;
     private IDbContextTransaction? _efTransaction;
 
-    private IUserRepository? _users;
-    private IRoleRepository? _roles;
-    private IAuditLogRepository? _auditLogs;
+    private ITenantRepository? _tenants;
+    private ITenantDatabaseRepository? _tenantDatabases;
+    private IMasterRefreshTokenRepository? _refreshTokens;
 
-    public UnitOfWork(SmreaderDbContext dbContext, TenantDapperContext dapperContext)
+    public MasterUnitOfWork(MasterDbContext dbContext, MasterDapperContext dapperContext)
     {
         _dbContext = dbContext;
         _dapperContext = dapperContext;
@@ -42,14 +39,14 @@ public class UnitOfWork : IUnitOfWork
         }
     }
 
-    public IUserRepository Users =>
-        _users ??= new UserRepository(_dbContext, Connection, _transaction);
+    public ITenantRepository Tenants =>
+        _tenants ??= new TenantRepository(_dbContext, Connection, _transaction);
 
-    public IRoleRepository Roles =>
-        _roles ??= new RoleRepository(_dbContext, Connection, _transaction);
+    public ITenantDatabaseRepository TenantDatabases =>
+        _tenantDatabases ??= new TenantDatabaseRepository(_dbContext, Connection, _transaction);
 
-    public IAuditLogRepository AuditLogs =>
-        _auditLogs ??= new AuditLogRepository(_dbContext, Connection, _transaction);
+    public IMasterRefreshTokenRepository RefreshTokens =>
+        _refreshTokens ??= new MasterRefreshTokenRepository(_dbContext, Connection, _transaction);
 
     public async Task BeginTransactionAsync()
     {
@@ -65,9 +62,9 @@ public class UnitOfWork : IUnitOfWork
         _transaction = _connection.BeginTransaction();
 
         // Reset repositories so they pick up the new transaction
-        _users = null;
-        _roles = null;
-        _auditLogs = null;
+        _tenants = null;
+        _tenantDatabases = null;
+        _refreshTokens = null;
     }
 
     public async Task CommitAsync()
@@ -107,6 +104,7 @@ public class UnitOfWork : IUnitOfWork
         _efTransaction?.Dispose();
         _transaction?.Dispose();
         _connection?.Dispose();
+        _dbContext?.Dispose();
         GC.SuppressFinalize(this);
     }
 }

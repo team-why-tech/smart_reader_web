@@ -3,23 +3,77 @@
 | Field              | Value                                                              |
 | ------------------ | ------------------------------------------------------------------ |
 | **Project**        | SmreaderAPI                                                        |
-| **Version**        | 1.0.0                                                              |
+| **Version**        | 2.0.0 — Multi-Tenant Architecture                                  |
 | **Target**         | .NET 10.0 (Preview)                                                |
-| **Database**       | MySQL 8.x                                                          |
-| **ORM**            | Dapper (micro-ORM) + LINQ expression-to-SQL converter              |
-| **Auth**           | JWT Bearer + Refresh Token Rotation                                |
-| **Architecture**   | Clean Architecture (Domain → Application → Infrastructure → API)   |
-| **Caching**        | L1 In-Memory + L2 Redis                                           |
+| **Database**       | MySQL 8.x (Master + Per-Tenant-Per-FY)                             |
+| **ORM**            | EF Core + Dapper (hybrid)                                          |
+| **Auth**           | JWT Bearer + Refresh Token Rotation (Centralized)                  |
+| **Architecture**   | Multi-Tenant Clean Architecture                                    |
+| **Tenancy Model**  | Database per Tenant per Financial Year                             |
+| **Caching**        | L1 In-Memory + L2 Redis (Connection String Cache)                  |
 | **Logging**        | Serilog (Console + File sinks)                                     |
 | **Rate Limiting**  | AspNetCoreRateLimit (IP-based)                                     |
 | **Testing**        | xUnit + Moq + FluentAssertions                                    |
 | **CI/CD**          | GitHub Actions → IIS on VM                                         |
 | **Containerization** | Docker (multi-stage) + docker-compose                            |
-| **Date**           | April 25, 2026                                                     |
+| **Date**           | May 5, 2026                                                        |
 
 ---
 
-## 1. Solution Structure
+## 1. Architecture Overview
+
+### 1.1 Multi-Tenant Database Strategy
+
+```
+MASTER DATABASE (Control Plane)
+├── tenants                 → Tenant registry
+├── tenant_databases        → FY database mapping
+└── refresh_tokens          → Centralized token storage
+
+TENANT DATABASES (Data Plane)
+├── Tenant1_FY2024-25
+│   ├── users
+│   ├── roles
+│   └── audit_logs
+├── Tenant1_FY2023-24
+│   ├── users
+│   ├── roles
+│   └── audit_logs
+└── Tenant2_FY2024-25
+    ├── users
+    ├── roles
+    └── audit_logs
+```
+
+**Key Principles:**
+- Master DB = Control plane (tenant config, auth state)
+- Tenant DB = Data plane (business data per FY)
+- JWT carries `tenant_id` + `fy` for dynamic routing
+- Connection strings cached (30 min TTL)
+- RefreshTokens ONLY in master DB
+
+### 1.2 Request Flow
+
+```
+1. User Login → POST /api/auth/login { tenantCode, email, password }
+2. API looks up tenant in master DB
+3. API resolves default FY connection from master DB
+4. API validates credentials against tenant DB
+5. API generates JWT with tenant_id + fy claims
+6. API stores refresh token in master DB
+7. Return access_token + refresh_token
+
+Subsequent Requests:
+1. JWT validated → tenant_id + fy extracted
+2. TenantResolutionMiddleware resolves connection (cache → master DB)
+3. TenantContext populated with connection string
+4. SmreaderDbContext uses dynamic connection
+5. Controller → Service → Repository → Tenant DB
+```
+
+---
+
+## 2. Solution Structure
 
 ```
 SmreaderAPI/
@@ -35,69 +89,95 @@ SmreaderAPI/
 │       ├── cd.yml
 │       └── pr-checks.yml
 ├── scripts/
-│   └── init.sql
+│   ├── init.sql                      (Legacy - deprecated)
+│   ├── master_init.sql               (Master DB schema)
+│   ├── tenant_init.sql               (Tenant DB template)
+│   └── migrate_to_multitenant.sql    (Migration script)
 ├── src/
 │   ├── SmreaderAPI.Domain/
 │   │   ├── Entities/
 │   │   │   ├── BaseEntity.cs
 │   │   │   ├── User.cs
 │   │   │   ├── Role.cs
-│   │   │   ├── RefreshToken.cs
-│   │   │   └── AuditLog.cs
+│   │   │   ├── AuditLog.cs
+│   │   │   └── Master/              (NEW)
+│   │   │       ├── Tenant.cs
+│   │   │       ├── TenantDatabase.cs
+│   │   │       └── MasterRefreshToken.cs
 │   │   └── Interfaces/
 │   │       ├── IRepository.cs
 │   │       ├── IUserRepository.cs
 │   │       ├── IRoleRepository.cs
-│   │       ├── IRefreshTokenRepository.cs
 │   │       ├── IAuditLogRepository.cs
-│   │       └── IUnitOfWork.cs
+│   │       ├── IUnitOfWork.cs
+│   │       ├── ITenantContext.cs              (NEW)
+│   │       ├── ITenantConnectionResolver.cs   (NEW)
+│   │       ├── IMasterUnitOfWork.cs           (NEW)
+│   │       └── Master/                        (NEW)
+│   │           ├── ITenantRepository.cs
+│   │           ├── ITenantDatabaseRepository.cs
+│   │           └── IMasterRefreshTokenRepository.cs
 │   ├── SmreaderAPI.Application/
 │   │   ├── DTOs/
 │   │   │   ├── UserDto.cs
-│   │   │   ├── AuthDtos.cs
+│   │   │   ├── AuthDtos.cs          (UPDATED: TenantCode, SwitchFyDto)
 │   │   │   ├── RoleDto.cs
 │   │   │   ├── AuditLogDto.cs
 │   │   │   └── ApiResponse.cs
 │   │   ├── Interfaces/
-│   │   │   ├── IUserService.cs
-│   │   │   ├── IAuthService.cs
+│   │   │   ├── IUserService.cs      (UPDATED: SwitchFinancialYearAsync)
+│   │   │   ├── IAuthService.cs      (UPDATED: tenant params)
 │   │   │   ├── IAuditService.cs
 │   │   │   └── ICacheService.cs
 │   │   ├── Mappings/
 │   │   │   └── MappingExtensions.cs
 │   │   └── Services/
-│   │       ├── UserService.cs
+│   │       ├── UserService.cs       (UPDATED: multi-tenant login/refresh)
 │   │       └── AuditService.cs
 │   ├── SmreaderAPI.Infrastructure/
 │   │   ├── Data/
-│   │   │   ├── DapperContext.cs
-│   │   │   └── ExpressionToSqlConverter.cs
+│   │   │   ├── SmreaderDbContext.cs (UPDATED: removed RefreshTokens)
+│   │   │   ├── ExpressionToSqlConverter.cs
+│   │   │   └── Master/              (NEW)
+│   │   │       ├── MasterDbContext.cs
+│   │   │       └── MasterDapperContext.cs
 │   │   ├── Repositories/
 │   │   │   ├── GenericRepository.cs
 │   │   │   ├── UserRepository.cs
 │   │   │   ├── RoleRepository.cs
-│   │   │   ├── RefreshTokenRepository.cs
-│   │   │   └── AuditLogRepository.cs
+│   │   │   ├── AuditLogRepository.cs
+│   │   │   └── Master/              (NEW)
+│   │   │       ├── TenantRepository.cs
+│   │   │       ├── TenantDatabaseRepository.cs
+│   │   │       └── MasterRefreshTokenRepository.cs
 │   │   ├── UnitOfWork/
-│   │   │   └── UnitOfWork.cs
+│   │   │   ├── UnitOfWork.cs        (UPDATED: TenantDapperContext)
+│   │   │   └── MasterUnitOfWork.cs  (NEW)
+│   │   ├── Tenancy/                 (NEW)
+│   │   │   ├── TenantContext.cs
+│   │   │   ├── TenantConnectionResolver.cs
+│   │   │   └── TenantDapperContext.cs
 │   │   ├── Services/
-│   │   │   └── AuthService.cs
+│   │   │   └── AuthService.cs       (UPDATED: JWT with tenant claims)
 │   │   ├── Caching/
 │   │   │   └── CacheService.cs
 │   │   └── Logging/
 │   │       └── SerilogRequestEnricher.cs
 │   └── SmreaderAPI.API/
-│       ├── Program.cs
-│       ├── appsettings.json
+│       ├── Program.cs                (UPDATED: multi-tenant DI)
+│       ├── appsettings.json          (UPDATED: MasterConnection)
 │       ├── appsettings.Development.json
 │       ├── appsettings.Staging.json
 │       ├── appsettings.Production.json
 │       ├── web.config
 │       ├── Controllers/
-│       │   ├── AuthController.cs
+│       │   ├── AuthController.cs     (UPDATED: SwitchFy endpoint)
 │       │   ├── UsersController.cs
 │       │   ├── RolesController.cs
 │       │   └── AuditLogController.cs
+│       └── Middleware/
+│           ├── ExceptionMiddleware.cs
+│           └── TenantResolutionMiddleware.cs  (NEW)
 │       └── Middleware/
 │           └── ExceptionMiddleware.cs
 └── tests/
@@ -120,9 +200,9 @@ SmreaderAPI/
 
 ---
 
-## 2. Project Dependencies
+## 3. Project Dependencies
 
-### 2.1 Project References
+### 3.1 Project References
 
 | Project                          | References                                |
 | -------------------------------- | ----------------------------------------- |
@@ -132,14 +212,16 @@ SmreaderAPI/
 | `SmreaderAPI.API`                | `SmreaderAPI.Infrastructure`, `SmreaderAPI.Application` |
 | `SmreaderAPI.UnitTests`          | `SmreaderAPI.Domain`, `SmreaderAPI.Application`, `SmreaderAPI.Infrastructure`, `SmreaderAPI.API` |
 
-### 2.2 NuGet Packages
+### 3.2 NuGet Packages
 
 | Project           | Package                                            | Purpose                              |
 | ----------------- | -------------------------------------------------- | ------------------------------------ |
 | **Domain**        | *(none)*                                           |                                      |
 | **Application**   | `FluentValidation`                                 | DTO validation                       |
-| **Infrastructure**| `Dapper`                                           | Micro-ORM                            |
+| **Infrastructure**| `Dapper`                                           | Micro-ORM (raw SQL)                  |
 |                   | `MySqlConnector`                                   | MySQL ADO.NET driver                 |
+|                   | `Microsoft.EntityFrameworkCore`                    | EF Core (tenant/master DbContext)    |
+|                   | `Pomelo.EntityFrameworkCore.MySql`                 | EF Core MySQL provider               |
 |                   | `Microsoft.Extensions.Configuration.Abstractions`  | Config access                        |
 |                   | `System.IdentityModel.Tokens.Jwt`                  | JWT generation/validation            |
 |                   | `Microsoft.AspNetCore.Authentication.JwtBearer`    | JWT middleware                       |
@@ -161,9 +243,9 @@ SmreaderAPI/
 
 ---
 
-## 3. Domain Layer
+## 4. Domain Layer
 
-### 3.1 Base Entity
+### 4.1 Base Entity
 
 ```csharp
 public abstract class BaseEntity
@@ -174,7 +256,53 @@ public abstract class BaseEntity
 }
 ```
 
-### 3.2 Entities
+### 4.2 Master Entities (Control Plane)
+
+#### Tenant
+
+| Property   | Type       | Constraints                        |
+| ---------- | ---------- | ---------------------------------- |
+| `Id`       | `int`      | PK, auto-increment                 |
+| `Name`     | `string`   | Required, max 100                  |
+| `Code`     | `string`   | Required, max 50, unique           |
+| `IsActive` | `bool`     | Default: true                      |
+| `CreatedAt`| `DateTime` | Default: UTC now                   |
+| `UpdatedAt`| `DateTime?`| Nullable                           |
+
+#### TenantDatabase
+
+| Property          | Type       | Constraints                        |
+| ----------------- | ---------- | ---------------------------------- |
+| `Id`              | `int`      | PK, auto-increment                 |
+| `TenantId`        | `int`      | FK → tenants.Id                    |
+| `FinancialYear`   | `string`   | Required, max 10 (e.g., "2024-25") |
+| `ConnectionString`| `string`   | Required, max 512                  |
+| `IsDefault`       | `bool`     | Default: false                     |
+| `CreatedAt`       | `DateTime` | Default: UTC now                   |
+| `UpdatedAt`       | `DateTime?`| Nullable                           |
+
+**Unique constraint:** `(TenantId, FinancialYear)`
+
+#### MasterRefreshToken
+
+| Property          | Type        | Constraints                        |
+| ----------------- | ----------- | ---------------------------------- |
+| `Id`              | `int`       | PK, auto-increment                 |
+| `UserId`          | `int`       | User ID from tenant DB             |
+| `TenantId`        | `int`       | FK → tenants.Id                    |
+| `Token`           | `string`    | Required, max 512, indexed         |
+| `ExpiresAt`       | `DateTime`  | Required                           |
+| `CreatedAt`       | `DateTime`  | Default: UTC now                   |
+| `RevokedAt`       | `DateTime?` | Nullable                           |
+| `IsRevoked`       | `bool`      | Default: false                     |
+| `ReplacedByToken` | `string?`   | Optional, max 512                  |
+| `IpAddress`       | `string?`   | Optional, max 45 (IPv6)            |
+
+### 4.3 Tenant Entities (Data Plane)
+
+### 4.3 Tenant Entities (Data Plane)
+
+**Note:** RefreshTokens do NOT exist in tenant databases. They are centralized in master DB.
 
 #### User
 
@@ -197,18 +325,7 @@ public abstract class BaseEntity
 | `Name`        | `string`   | Required, max 50, unique           |
 | `Description` | `string?`  | Optional, max 255                  |
 | `CreatedAt`   | `DateTime` | Default: UTC now                   |
-
-#### RefreshToken
-
-| Property     | Type        | Constraints                        |
-| ------------ | ----------- | ---------------------------------- |
-| `Id`         | `int`       | PK, auto-increment                 |
-| `UserId`     | `int`       | FK → Users.Id                      |
-| `Token`      | `string`    | Required, max 512, indexed         |
-| `ExpiresAt`  | `DateTime`  | Required                           |
-| `CreatedAt`  | `DateTime`  | Default: UTC now                   |
-| `RevokedAt`  | `DateTime?` | Nullable                           |
-| `IsRevoked`  | `bool`      | Default: false                     |
+| `UpdatedAt`   | `DateTime?`| Nullable                           |
 
 #### AuditLog
 
@@ -221,52 +338,37 @@ public abstract class BaseEntity
 | `EntityId`   | `int?`      | Nullable                           |
 | `Timestamp`  | `DateTime`  | Default: UTC now                   |
 | `Details`    | `string?`   | Optional, TEXT                     |
+| `CreatedAt`  | `DateTime`  | Default: UTC now                   |
+| `UpdatedAt`  | `DateTime?` | Nullable                           |
 
-### 3.3 Repository Interfaces
+### 4.4 Repository Interfaces
 
-#### IRepository\<T\> (Generic)
+#### Master Repositories
 
-```csharp
-public interface IRepository<T> where T : BaseEntity
-{
-    Task<T?> GetByIdAsync(int id);
-    Task<IEnumerable<T>> GetAllAsync();
-    Task<IEnumerable<T>> FindAsync(Expression<Func<T, bool>> predicate);
-    Task<int> AddAsync(T entity);
-    Task<int> UpdateAsync(T entity);
-    Task<int> DeleteAsync(int id);
-    Task<IEnumerable<T>> QueryAsync(string sql, object? param = null);
-}
-```
+| Interface                         | Methods                                                  |
+| --------------------------------- | -------------------------------------------------------- |
+| `ITenantRepository`               | Base + `GetByCodeAsync`, `GetAllActiveAsync`             |
+| `ITenantDatabaseRepository`       | Base + `GetByTenantAndFyAsync`, `GetDefaultForTenantAsync`, `GetAllByTenantAsync` |
+| `IMasterRefreshTokenRepository`   | Base + `GetByTokenAsync`, `RevokeTokenAsync`, `GetActiveTokensByUserAndTenantAsync` |
 
-| Method        | Description                                                                 |
-| ------------- | --------------------------------------------------------------------------- |
-| `GetByIdAsync`| SELECT by primary key                                                       |
-| `GetAllAsync` | SELECT all rows from entity table                                           |
-| `FindAsync`   | Converts LINQ `Expression<Func<T, bool>>` to parameterized SQL WHERE clause|
-| `AddAsync`    | INSERT, returns new row ID                                                  |
-| `UpdateAsync` | UPDATE by ID, returns affected row count                                    |
-| `DeleteAsync` | DELETE by ID, returns affected row count                                    |
-| `QueryAsync`  | Execute raw Dapper SQL with optional parameters                             |
+#### Tenant Repositories
 
-#### Entity-Specific Repositories
+| Interface               | Methods                                                  |
+| ----------------------- | -------------------------------------------------------- |
+| `IUserRepository`       | Base + `GetByEmailAsync`, `GetByRoleAsync`               |
+| `IRoleRepository`       | Base + `GetByNameAsync`                                  |
+| `IAuditLogRepository`   | Base + `GetByEntityAsync`, `GetByUserIdAsync`            |
 
-| Interface                  | Additional Methods                                                  |
-| -------------------------- | ------------------------------------------------------------------- |
-| `IUserRepository`          | `GetByEmailAsync(string email)`, `GetByRoleAsync(int roleId)`      |
-| `IRoleRepository`          | `GetByNameAsync(string name)`                                       |
-| `IRefreshTokenRepository`  | `GetByTokenAsync(string token)`, `RevokeTokenAsync(int id)`, `GetActiveTokensByUserAsync(int userId)` |
-| `IAuditLogRepository`      | `GetByEntityAsync(string entityName, int entityId)`, `GetByUserIdAsync(int userId)` |
+### 4.5 Unit of Work Interfaces
 
-### 3.4 IUnitOfWork
+#### IMasterUnitOfWork (Control Plane)
 
 ```csharp
-public interface IUnitOfWork : IDisposable
+public interface IMasterUnitOfWork : IDisposable
 {
-    IUserRepository Users { get; }
-    IRoleRepository Roles { get; }
-    IRefreshTokenRepository RefreshTokens { get; }
-    IAuditLogRepository AuditLogs { get; }
+    ITenantRepository Tenants { get; }
+    ITenantDatabaseRepository TenantDatabases { get; }
+    IMasterRefreshTokenRepository RefreshTokens { get; }
 
     Task BeginTransactionAsync();
     Task CommitAsync();
@@ -274,15 +376,68 @@ public interface IUnitOfWork : IDisposable
 }
 ```
 
-- Single `IDbConnection` + `IDbTransaction` shared across all repositories
-- Repositories are lazy-initialized
-- `Dispose()` cleans up connection and transaction
+#### IUnitOfWork (Data Plane)
+
+```csharp
+public interface IUnitOfWork : IDisposable
+{
+    IUserRepository Users { get; }
+    IRoleRepository Roles { get; }
+    IAuditLogRepository AuditLogs { get; }
+    // Note: RefreshTokens removed - now in IMasterUnitOfWork
+
+    Task BeginTransactionAsync();
+    Task CommitAsync();
+    Task RollbackAsync();
+}
+```
+
+### 4.6 Tenancy Interfaces
+
+#### ITenantContext
+
+```csharp
+public interface ITenantContext
+{
+    int TenantId { get; }
+    string FinancialYear { get; }
+    string ConnectionString { get; }
+    bool IsResolved { get; }
+    void SetContext(int tenantId, string financialYear, string connectionString);
+}
+```
+
+**Purpose:** Request-scoped service holding resolved tenant database connection for current HTTP request.
+
+#### ITenantConnectionResolver
+
+```csharp
+public interface ITenantConnectionResolver
+{
+    Task<string> ResolveConnectionStringAsync(int tenantId, string financialYear);
+    Task InvalidateCacheAsync(int tenantId, string financialYear);
+}
+```
+
+**Purpose:** Resolves connection strings with cache-first strategy (L1/L2 cache → master DB fallback).
 
 ---
 
-## 4. Application Layer
+## 5. Application Layer
 
-### 4.1 DTOs
+### 5.1 DTOs
+
+#### AuthDtos (Updated for Multi-Tenancy)
+
+```csharp
+public record LoginDto(string TenantCode, string Email, string Password);
+public record RegisterDto(string Name, string Email, string Password);
+public record TokenResponseDto(string AccessToken, string RefreshToken, DateTime ExpiresAt);
+public record RefreshTokenRequestDto(string RefreshToken);
+public record SwitchFyDto(string FinancialYear);  // NEW
+```
+
+**Key Change:** `LoginDto` now includes `TenantCode` to identify which tenant to authenticate against.
 
 #### UserDto / CreateUserDto / UpdateUserDto
 
@@ -291,13 +446,6 @@ public record UserDto(int Id, string Name, string Email, string RoleName, bool I
 public record CreateUserDto(string Name, string Email, string Password, int RoleId);
 public record UpdateUserDto(string? Name, string? Email, int? RoleId, bool? IsActive);
 ```
-
-#### AuthDtos
-
-```csharp
-public record LoginDto(string Email, string Password);
-public record RegisterDto(string Name, string Email, string Password);
-public record TokenResponseDto(string AccessToken, string RefreshToken, DateTime ExpiresAt);
 public record RefreshTokenRequestDto(string RefreshToken);
 ```
 
@@ -321,9 +469,11 @@ public class ApiResponse<T>
 }
 ```
 
-### 4.2 Service Interfaces
+---
 
-#### IUserService
+## 6. Service Interfaces (Updated for Multi-Tenancy)
+
+### IUserService
 
 ```csharp
 public interface IUserService
@@ -331,6 +481,7 @@ public interface IUserService
     Task<ApiResponse<TokenResponseDto>> RegisterAsync(RegisterDto dto);
     Task<ApiResponse<TokenResponseDto>> LoginAsync(LoginDto dto);
     Task<ApiResponse<TokenResponseDto>> RefreshTokenAsync(RefreshTokenRequestDto dto);
+    Task<ApiResponse<TokenResponseDto>> SwitchFinancialYearAsync(SwitchFyDto dto);  // NEW
     Task<ApiResponse<UserDto>> GetByIdAsync(int id);
     Task<ApiResponse<IEnumerable<UserDto>>> GetAllAsync();
     Task<ApiResponse<UserDto>> UpdateAsync(int id, UpdateUserDto dto);
@@ -338,18 +489,127 @@ public interface IUserService
 }
 ```
 
-#### IAuthService
+### IAuthService
 
 ```csharp
 public interface IAuthService
 {
-    string GenerateJwtToken(User user, string roleName);
+    string GenerateJwtToken(User user, string roleName, int tenantId, string financialYear);  // UPDATED
     string GenerateRefreshToken();
     Task<bool> ValidateRefreshTokenAsync(string token);
+    string HashPassword(string password);
+    bool VerifyPassword(string password, string hash);
 }
 ```
 
-#### IAuditService
+---
+
+## 7. Middleware Pipeline
+
+```
+Request
+  ↓
+ExceptionMiddleware
+  ↓
+Serilog Request Logging
+  ↓
+IP Rate Limiting
+  ↓
+CORS
+  ↓
+Authentication (JWT validation)
+  ↓
+TenantResolutionMiddleware  ← NEW
+  • Skips: /api/auth/*, /health, /swagger
+  • Reads tenant_id + fy from JWT
+  • Resolves connection string (cache → master DB)
+  • Populates ITenantContext (scoped)
+  ↓
+Authorization
+  ↓
+Controller → Service → Repository → Tenant DB
+```
+
+---
+
+## 8. Database Connections
+
+### Master Database
+- **Connection:** Static from `appsettings.json`
+- **Context:** `MasterDbContext` (EF Core) + `MasterDapperContext`
+- **Used for:** Tenant lookup, tenant_databases, refresh_tokens
+
+### Tenant Database
+- **Connection:** Dynamic, resolved per request from `ITenantContext`
+- **Context:** `SmreaderDbContext` (EF Core) + `TenantDapperContext`
+- **Resolution:** Cache-first (30 min TTL) → Master DB fallback
+- **Used for:** Users, Roles, AuditLogs, business data
+
+---
+
+## 9. Key Changes from v1.0.0
+
+### ✅ Added
+- Master database for control plane (tenants, tenant_databases, refresh_tokens)
+- `ITenantContext`, `ITenantConnectionResolver`, `IMasterUnitOfWork` interfaces
+- `TenantResolutionMiddleware` for dynamic DB routing
+- JWT now includes `tenant_id` and `fy` claims
+- Switch financial year endpoint
+- Connection string caching with 30-min TTL
+- Master entities: `Tenant`, `TenantDatabase`, `MasterRefreshToken`
+- Tenant-scoped `TenantDapperContext` for dynamic connections
+
+### ❌ Removed
+- `RefreshToken` entity from tenant databases (moved to master)
+- `IRefreshTokenRepository` from tenant UnitOfWork
+- Single static `DapperContext` (replaced with master/tenant versions)
+
+### 🔄 Modified
+- `LoginDto` now requires `TenantCode`
+- `IAuthService.GenerateJwtToken` now accepts tenant params
+- `UserService.LoginAsync` resolves tenant DB before authentication
+- `UserService.RefreshTokenAsync` validates against master DB
+- `SmreaderDbContext` uses dynamic connection string
+- `UnitOfWork` uses tenant-scoped dependencies
+
+---
+
+## 10. Migration & Deployment
+
+### Migration from v1.0.0
+See `scripts/migrate_to_multitenant.sql` for complete migration script.
+
+**Steps:**
+1. Run `master_init.sql` to create master DB
+2. Run `migrate_to_multitenant.sql` to copy data
+3. Update `appsettings.json` with `MasterConnection`
+4. Restart API application
+5. Test login with `tenantCode: "default"`
+
+### Creating New Tenant FY Database
+Use `scripts/tenant_init.sql` as template (replace `{DATABASE_NAME}` placeholder).
+
+---
+
+## 11. Full Multi-Tenant Documentation
+
+For complete multi-tenant architecture documentation, see:
+📘 **[MULTI_TENANT_SPEC.md](./MULTI_TENANT_SPEC.md)**
+
+Covers:
+- Detailed authentication flows
+- JWT structure and claims
+- Connection resolution strategy
+- Security best practices
+- API endpoints reference
+- Testing checklist
+- Future improvements
+
+---
+
+**Version History:**
+- **v1.0.0** (April 25, 2026): Initial single-database architecture
+- **v2.0.0** (May 5, 2026): Multi-tenant per-FY database architecture
 
 ```csharp
 public interface IAuditService

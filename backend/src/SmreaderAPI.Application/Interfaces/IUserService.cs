@@ -7,6 +7,7 @@ public interface IUserService
     Task<ApiResponse<TokenResponseDto>> RegisterAsync(RegisterDto dto);
     Task<ApiResponse<TokenResponseDto>> LoginAsync(LoginDto dto);
     Task<ApiResponse<TokenResponseDto>> RefreshTokenAsync(RefreshTokenRequestDto dto);
+    Task<ApiResponse<TokenResponseDto>> SwitchFinancialYearAsync(SwitchFyDto dto);
     Task<ApiResponse<UserDto>> GetByIdAsync(int id);
     Task<ApiResponse<IEnumerable<UserDto>>> GetAllAsync();
     Task<ApiResponse<UserDto>> UpdateAsync(int id, UpdateUserDto dto);

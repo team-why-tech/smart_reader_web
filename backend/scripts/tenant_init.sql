@@ -1,9 +1,10 @@
--- Tenant Database Schema (Legacy single-database version - deprecated)
--- For multi-tenant architecture, use tenant_init.sql instead
--- This file is kept for reference only
+-- Tenant Database Initialization Template
+-- This script should be run for each new tenant financial year database
+-- Note: RefreshTokens table does NOT exist in tenant DBs (they're in master DB)
 
-CREATE DATABASE IF NOT EXISTS SmreaderDB;
-USE SmreaderDB;
+-- Replace {DATABASE_NAME} with actual tenant FY database name (e.g., smreader_tenant1_fy2024_25)
+CREATE DATABASE IF NOT EXISTS {DATABASE_NAME};
+USE {DATABASE_NAME};
 
 CREATE TABLE IF NOT EXISTS Roles (
     Id          INT AUTO_INCREMENT PRIMARY KEY,
@@ -11,7 +12,7 @@ CREATE TABLE IF NOT EXISTS Roles (
     Description VARCHAR(255),
     CreatedAt   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UpdatedAt   DATETIME NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS Users (
     Id           INT AUTO_INCREMENT PRIMARY KEY,
@@ -24,9 +25,7 @@ CREATE TABLE IF NOT EXISTS Users (
     IsActive     TINYINT(1) NOT NULL DEFAULT 1,
     UNIQUE INDEX IX_Users_Email (Email),
     CONSTRAINT FK_Users_Roles FOREIGN KEY (RoleId) REFERENCES Roles(Id)
-);
-
--- Note: RefreshTokens table removed - now stored in Master DB for multi-tenant architecture
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS AuditLogs (
     Id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -41,9 +40,9 @@ CREATE TABLE IF NOT EXISTS AuditLogs (
     INDEX IX_AuditLogs_UserId (UserId),
     INDEX IX_AuditLogs_Entity (EntityName, EntityId),
     CONSTRAINT FK_AuditLogs_Users FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Seed Data
+-- Seed Default Roles
 INSERT INTO Roles (Name, Description) VALUES ('Admin', 'System administrator')
 ON DUPLICATE KEY UPDATE Description = VALUES(Description);
 

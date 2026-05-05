@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SmreaderAPI.Application.DTOs;
 using SmreaderAPI.Application.Interfaces;
@@ -39,6 +40,16 @@ public class AuthController : ControllerBase
         var result = await _userService.RefreshTokenAsync(dto);
         if (!result.Success)
             return Unauthorized(result);
+        return Ok(result);
+    }
+
+    [Authorize]
+    [HttpPost("switch-fy")]
+    public async Task<IActionResult> SwitchFinancialYear([FromBody] SwitchFyDto dto)
+    {
+        var result = await _userService.SwitchFinancialYearAsync(dto);
+        if (!result.Success)
+            return BadRequest(result);
         return Ok(result);
     }
 }

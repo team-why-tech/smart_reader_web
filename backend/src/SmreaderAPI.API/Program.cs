@@ -11,8 +11,10 @@ using SmreaderAPI.Application.Services;
 using SmreaderAPI.Domain.Interfaces;
 using SmreaderAPI.Infrastructure.Caching;
 using SmreaderAPI.Infrastructure.Data;
+using SmreaderAPI.Infrastructure.Data.Master;
 using SmreaderAPI.Infrastructure.Logging;
 using SmreaderAPI.Infrastructure.Services;
+using SmreaderAPI.Infrastructure.Tenancy;
 using SmreaderAPI.Infrastructure.UnitOfWork;
 using SmreaderAPI.API.Middleware;
 
@@ -127,15 +129,38 @@ try
         options.InstanceName = "SmreaderAPI:";
     });
 
-    // Infrastructure
-    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")!;
-
-    builder.Services.AddDbContext<SmreaderDbContext>(options =>
-        options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 36)))
+    // Master Database (Control Plane)
+    var masterConnectionString = builder.Configuration.GetConnectionString("MasterConnection")!;
+    
+    builder.Services.AddDbContext<MasterDbContext>(options =>
+        options.UseMySql(masterConnectionString, new MySqlServerVersion(new Version(8, 0, 36)))
                .EnableSensitiveDataLogging(builder.Environment.IsDevelopment())
                .EnableDetailedErrors(builder.Environment.IsDevelopment()));
+    
+    builder.Services.AddSingleton<MasterDapperContext>();
+    builder.Services.AddScoped<IMasterUnitOfWork, MasterUnitOfWork>();
 
-    builder.Services.AddSingleton<DapperContext>();
+    // Tenant Context (Request-Scoped)
+    builder.Services.AddScoped<ITenantContext, TenantContext>();
+    builder.Services.AddScoped<ITenantConnectionResolver, TenantConnectionResolver>();
+    builder.Services.AddScoped<TenantDapperContext>();
+
+    // Tenant Database (Data Plane - Dynamic Connection)
+    builder.Services.AddDbContext<SmreaderDbContext>((serviceProvider, options) =>
+    {
+        var tenantContext = serviceProvider.GetService<ITenantContext>();
+        
+        // If tenant context is resolved (authenticated request), use tenant connection
+        // Otherwise, use default connection for unauthenticated endpoints (register)
+        var connectionString = tenantContext?.IsResolved == true 
+            ? tenantContext.ConnectionString 
+            : builder.Configuration.GetConnectionString("DefaultConnection")!;
+        
+        options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 36)))
+               .EnableSensitiveDataLogging(builder.Environment.IsDevelopment())
+               .EnableDetailedErrors(builder.Environment.IsDevelopment());
+    });
+
     builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
     // Services
@@ -156,6 +181,7 @@ try
     app.UseIpRateLimiting();
     app.UseCors();
     app.UseAuthentication();
+    app.UseMiddleware<TenantResolutionMiddleware>(); // Resolve tenant context after auth
     app.UseAuthorization();
 
     

@@ -1,31 +1,49 @@
+using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using MySqlConnector;
 using SmreaderAPI.Application.DTOs;
 using SmreaderAPI.Application.Interfaces;
 using SmreaderAPI.Application.Mappings;
 using SmreaderAPI.Domain.Entities;
+using SmreaderAPI.Domain.Entities.Master;
 using SmreaderAPI.Domain.Interfaces;
+using System.Security.Claims;
 
 namespace SmreaderAPI.Application.Services;
 
 public class UserService : IUserService
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IMasterUnitOfWork _masterUnitOfWork;
     private readonly IAuthService _authService;
     private readonly ICacheService _cacheService;
     private readonly IAuditService _auditService;
+    private readonly ITenantConnectionResolver _tenantConnectionResolver;
+    private readonly IConfiguration _configuration;
+    private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ILogger<UserService> _logger;
 
     public UserService(
         IUnitOfWork unitOfWork,
+        IMasterUnitOfWork masterUnitOfWork,
         IAuthService authService,
         ICacheService cacheService,
         IAuditService auditService,
+        ITenantConnectionResolver tenantConnectionResolver,
+        IConfiguration configuration,
+        IHttpContextAccessor httpContextAccessor,
         ILogger<UserService> logger)
     {
         _unitOfWork = unitOfWork;
+        _masterUnitOfWork = masterUnitOfWork;
         _authService = authService;
         _cacheService = cacheService;
         _auditService = auditService;
+        _tenantConnectionResolver = tenantConnectionResolver;
+        _configuration = configuration;
+        _httpContextAccessor = httpContextAccessor;
         _logger = logger;
     }
 
@@ -85,31 +103,92 @@ public class UserService : IUserService
 
     public async Task<ApiResponse<TokenResponseDto>> LoginAsync(LoginDto dto)
     {
-        var user = await _unitOfWork.Users.GetByEmailAsync(dto.Email);
-        if (user is null || !_authService.VerifyPassword(dto.Password, user.PasswordHash))
-            return ApiResponse<TokenResponseDto>.FailResponse("Invalid email or password.");
+        // 1. Look up tenant by code in master DB
+        var tenant = await _masterUnitOfWork.Tenants.GetByCodeAsync(dto.TenantCode);
+        if (tenant is null || !tenant.IsActive)
+            return ApiResponse<TokenResponseDto>.FailResponse("Invalid tenant code or tenant is inactive.");
 
-        if (!user.IsActive)
-            return ApiResponse<TokenResponseDto>.FailResponse("Account is deactivated.");
+        // 2. Get default FY connection string for tenant
+        var tenantDb = await _masterUnitOfWork.TenantDatabases.GetDefaultForTenantAsync(tenant.Id);
+        if (tenantDb is null)
+            return ApiResponse<TokenResponseDto>.FailResponse("No default database configured for tenant.");
 
-        var role = await _unitOfWork.Roles.GetByIdAsync(user.RoleId);
+        // 3. Connect to tenant DB and validate credentials
+        User? user = null;
+        Role? role = null;
+
+        var connectionString = tenantDb.ConnectionString;
+        await using (var connection = new MySqlConnection(connectionString))
+        {
+            await connection.OpenAsync();
+
+            // Query user
+            var userSql = "SELECT * FROM Users WHERE Email = @Email LIMIT 1";
+            await using (var cmd = new MySqlCommand(userSql, connection))
+            {
+                cmd.Parameters.AddWithValue("@Email", dto.Email);
+                await using (var reader = await cmd.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        user = new User
+                        {
+                            Id = reader.GetInt32("Id"),
+                            Name = reader.GetString("Name"),
+                            Email = reader.GetString("Email"),
+                            PasswordHash = reader.GetString("PasswordHash"),
+                            RoleId = reader.GetInt32("RoleId"),
+                            IsActive = reader.GetBoolean("IsActive"),
+                            CreatedAt = reader.GetDateTime("CreatedAt")
+                        };
+                    }
+                }
+            }
+
+            if (user is null || !_authService.VerifyPassword(dto.Password, user.PasswordHash))
+                return ApiResponse<TokenResponseDto>.FailResponse("Invalid email or password.");
+
+            if (!user.IsActive)
+                return ApiResponse<TokenResponseDto>.FailResponse("Account is deactivated.");
+
+            // Query role
+            var roleSql = "SELECT * FROM Roles WHERE Id = @RoleId LIMIT 1";
+            await using (var roleCmd = new MySqlCommand(roleSql, connection))
+            {
+                roleCmd.Parameters.AddWithValue("@RoleId", user.RoleId);
+                await using (var roleReader = await roleCmd.ExecuteReaderAsync())
+                {
+                    if (await roleReader.ReadAsync())
+                    {
+                        role = new Role
+                        {
+                            Id = roleReader.GetInt32("Id"),
+                            Name = roleReader.GetString("Name")
+                        };
+                    }
+                }
+            }
+        }
+
         var roleName = role?.Name ?? "User";
 
-        var accessToken = _authService.GenerateJwtToken(user, roleName);
+        // 4. Generate JWT with tenant_id + fy claims
+        var accessToken = _authService.GenerateJwtToken(user, roleName, tenant.Id, tenantDb.FinancialYear);
         var refreshTokenValue = _authService.GenerateRefreshToken();
 
-        var refreshToken = new RefreshToken
+        // 5. Store refresh token in master DB
+        var refreshToken = new MasterRefreshToken
         {
             UserId = user.Id,
+            TenantId = tenant.Id,
             Token = refreshTokenValue,
             ExpiresAt = DateTime.UtcNow.AddDays(7),
             CreatedAt = DateTime.UtcNow
         };
-        await _unitOfWork.RefreshTokens.AddAsync(refreshToken);
+        await _masterUnitOfWork.RefreshTokens.AddAsync(refreshToken);
 
-        await _auditService.LogActionAsync(user.Id, "Login", "User", user.Id);
-
-        _logger.LogInformation("User logged in: {Email}", dto.Email);
+        _logger.LogInformation("User logged in: {Email}, Tenant: {TenantCode}, FY: {FY}", 
+            dto.Email, dto.TenantCode, tenantDb.FinancialYear);
 
         return ApiResponse<TokenResponseDto>.SuccessResponse(
             new TokenResponseDto(accessToken, refreshTokenValue, DateTime.UtcNow.AddMinutes(30)),
@@ -118,34 +197,200 @@ public class UserService : IUserService
 
     public async Task<ApiResponse<TokenResponseDto>> RefreshTokenAsync(RefreshTokenRequestDto dto)
     {
-        var existingToken = await _unitOfWork.RefreshTokens.GetByTokenAsync(dto.RefreshToken);
+        // 1. Validate refresh token in master DB
+        var existingToken = await _masterUnitOfWork.RefreshTokens.GetByTokenAsync(dto.RefreshToken);
         if (existingToken is null || existingToken.IsRevoked || existingToken.ExpiresAt <= DateTime.UtcNow)
             return ApiResponse<TokenResponseDto>.FailResponse("Invalid or expired refresh token.");
 
-        await _unitOfWork.RefreshTokens.RevokeTokenAsync(existingToken.Id);
+        // 2. Get tenant and default FY info from master DB
+        var tenant = await _masterUnitOfWork.Tenants.GetByIdAsync(existingToken.TenantId);
+        if (tenant is null || !tenant.IsActive)
+            return ApiResponse<TokenResponseDto>.FailResponse("Tenant not found or inactive.");
 
-        var user = await _unitOfWork.Users.GetByIdAsync(existingToken.UserId);
-        if (user is null)
-            return ApiResponse<TokenResponseDto>.FailResponse("User not found.");
+        var tenantDb = await _masterUnitOfWork.TenantDatabases.GetDefaultForTenantAsync(tenant.Id);
+        if (tenantDb is null)
+            return ApiResponse<TokenResponseDto>.FailResponse("No default database configured for tenant.");
 
-        var role = await _unitOfWork.Roles.GetByIdAsync(user.RoleId);
+        // 3. Get user from tenant DB
+        User? user = null;
+        Role? role = null;
+
+        var connectionString = tenantDb.ConnectionString;
+        await using (var connection = new MySqlConnection(connectionString))
+        {
+            await connection.OpenAsync();
+
+            var userSql = "SELECT * FROM Users WHERE Id = @UserId LIMIT 1";
+            await using (var cmd = new MySqlCommand(userSql, connection))
+            {
+                cmd.Parameters.AddWithValue("@UserId", existingToken.UserId);
+                await using (var reader = await cmd.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        user = new User
+                        {
+                            Id = reader.GetInt32("Id"),
+                            Name = reader.GetString("Name"),
+                            Email = reader.GetString("Email"),
+                            PasswordHash = reader.GetString("PasswordHash"),
+                            RoleId = reader.GetInt32("RoleId"),
+                            IsActive = reader.GetBoolean("IsActive")
+                        };
+                    }
+                }
+            }
+
+            if (user is null)
+                return ApiResponse<TokenResponseDto>.FailResponse("User not found.");
+
+            if (!user.IsActive)
+                return ApiResponse<TokenResponseDto>.FailResponse("Account is deactivated.");
+
+            // Query role
+            var roleSql = "SELECT * FROM Roles WHERE Id = @RoleId LIMIT 1";
+            await using (var roleCmd = new MySqlCommand(roleSql, connection))
+            {
+                roleCmd.Parameters.AddWithValue("@RoleId", user.RoleId);
+                await using (var roleReader = await roleCmd.ExecuteReaderAsync())
+                {
+                    if (await roleReader.ReadAsync())
+                    {
+                        role = new Role
+                        {
+                            Id = roleReader.GetInt32("Id"),
+                            Name = roleReader.GetString("Name")
+                        };
+                    }
+                }
+            }
+        }
+
         var roleName = role?.Name ?? "User";
 
-        var accessToken = _authService.GenerateJwtToken(user, roleName);
+        // 4. Revoke old refresh token
         var newRefreshTokenValue = _authService.GenerateRefreshToken();
+        await _masterUnitOfWork.RefreshTokens.RevokeTokenAsync(existingToken.Id, newRefreshTokenValue);
 
-        var newRefreshToken = new RefreshToken
+        // 5. Generate new tokens
+        var accessToken = _authService.GenerateJwtToken(user, roleName, tenant.Id, tenantDb.FinancialYear);
+
+        var newRefreshToken = new MasterRefreshToken
         {
             UserId = user.Id,
+            TenantId = tenant.Id,
             Token = newRefreshTokenValue,
             ExpiresAt = DateTime.UtcNow.AddDays(7),
             CreatedAt = DateTime.UtcNow
         };
-        await _unitOfWork.RefreshTokens.AddAsync(newRefreshToken);
+        await _masterUnitOfWork.RefreshTokens.AddAsync(newRefreshToken);
+
+        _logger.LogInformation("Token refreshed for user: {UserId}, Tenant: {TenantId}", user.Id, tenant.Id);
 
         return ApiResponse<TokenResponseDto>.SuccessResponse(
             new TokenResponseDto(accessToken, newRefreshTokenValue, DateTime.UtcNow.AddMinutes(30)),
             "Token refreshed.");
+    }
+
+    public async Task<ApiResponse<TokenResponseDto>> SwitchFinancialYearAsync(SwitchFyDto dto)
+    {
+        var user = _httpContextAccessor.HttpContext?.User;
+        if (user is null || !user.Identity?.IsAuthenticated ?? true)
+            return ApiResponse<TokenResponseDto>.FailResponse("User not authenticated.");
+
+        // Extract current tenant_id and user_id from JWT
+        var tenantIdClaim = user.FindFirst("tenant_id")?.Value;
+        var userIdClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        if (string.IsNullOrEmpty(tenantIdClaim) || string.IsNullOrEmpty(userIdClaim))
+            return ApiResponse<TokenResponseDto>.FailResponse("Invalid token: missing required claims.");
+
+        if (!int.TryParse(tenantIdClaim, out var tenantId) || !int.TryParse(userIdClaim, out var userId))
+            return ApiResponse<TokenResponseDto>.FailResponse("Invalid token: malformed claims.");
+
+        // Validate that the requested FY exists for this tenant
+        var tenantDb = await _masterUnitOfWork.TenantDatabases.GetByTenantAndFyAsync(tenantId, dto.FinancialYear);
+        if (tenantDb is null)
+            return ApiResponse<TokenResponseDto>.FailResponse($"Financial year '{dto.FinancialYear}' not found for your tenant.");
+
+        // Get user from the requested FY database
+        User? targetUser = null;
+        Role? role = null;
+
+        var connectionString = tenantDb.ConnectionString;
+        await using (var connection = new MySqlConnection(connectionString))
+        {
+            await connection.OpenAsync();
+
+            var userSql = "SELECT * FROM Users WHERE Id = @UserId LIMIT 1";
+            await using (var cmd = new MySqlCommand(userSql, connection))
+            {
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                await using (var reader = await cmd.ExecuteReaderAsync())
+                {
+                    if (await reader.ReadAsync())
+                    {
+                        targetUser = new User
+                        {
+                            Id = reader.GetInt32("Id"),
+                            Name = reader.GetString("Name"),
+                            Email = reader.GetString("Email"),
+                            PasswordHash = reader.GetString("PasswordHash"),
+                            RoleId = reader.GetInt32("RoleId"),
+                            IsActive = reader.GetBoolean("IsActive")
+                        };
+                    }
+                }
+            }
+
+            if (targetUser is null)
+                return ApiResponse<TokenResponseDto>.FailResponse("User not found in the requested financial year database.");
+
+            if (!targetUser.IsActive)
+                return ApiResponse<TokenResponseDto>.FailResponse("Account is deactivated in the requested financial year.");
+
+            // Query role
+            var roleSql = "SELECT * FROM Roles WHERE Id = @RoleId LIMIT 1";
+            await using (var roleCmd = new MySqlCommand(roleSql, connection))
+            {
+                roleCmd.Parameters.AddWithValue("@RoleId", targetUser.RoleId);
+                await using (var roleReader = await roleCmd.ExecuteReaderAsync())
+                {
+                    if (await roleReader.ReadAsync())
+                    {
+                        role = new Role
+                        {
+                            Id = roleReader.GetInt32("Id"),
+                            Name = roleReader.GetString("Name")
+                        };
+                    }
+                }
+            }
+        }
+
+        var roleName = role?.Name ?? "User";
+
+        // Generate new JWT with updated FY claim
+        var accessToken = _authService.GenerateJwtToken(targetUser, roleName, tenantId, dto.FinancialYear);
+        var refreshTokenValue = _authService.GenerateRefreshToken();
+
+        // Store new refresh token in master DB
+        var refreshToken = new MasterRefreshToken
+        {
+            UserId = targetUser.Id,
+            TenantId = tenantId,
+            Token = refreshTokenValue,
+            ExpiresAt = DateTime.UtcNow.AddDays(7),
+            CreatedAt = DateTime.UtcNow
+        };
+        await _masterUnitOfWork.RefreshTokens.AddAsync(refreshToken);
+
+        _logger.LogInformation("User switched FY: UserId={UserId}, TenantId={TenantId}, NewFY={FY}", 
+            userId, tenantId, dto.FinancialYear);
+
+        return ApiResponse<TokenResponseDto>.SuccessResponse(
+            new TokenResponseDto(accessToken, refreshTokenValue, DateTime.UtcNow.AddMinutes(30)),
+            $"Switched to financial year {dto.FinancialYear}.");
     }
 
     public async Task<ApiResponse<UserDto>> GetByIdAsync(int id)
