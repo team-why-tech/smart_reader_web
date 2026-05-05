@@ -1,8 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
-using Moq;
 using SmreaderAPI.Domain.Entities;
-using SmreaderAPI.Domain.Interfaces;
 using SmreaderAPI.Infrastructure.Services;
 
 namespace SmreaderAPI.UnitTests.Services;
@@ -10,7 +8,6 @@ namespace SmreaderAPI.UnitTests.Services;
 public class AuthServiceTests
 {
     private readonly AuthService _sut;
-    private readonly Mock<IUnitOfWork> _unitOfWorkMock;
 
     public AuthServiceTests()
     {
@@ -26,8 +23,7 @@ public class AuthServiceTests
             .AddInMemoryCollection(configData)
             .Build();
 
-        _unitOfWorkMock = new Mock<IUnitOfWork>();
-        _sut = new AuthService(configuration, _unitOfWorkMock.Object);
+        _sut = new AuthService(configuration);
     }
 
     [Fact]
@@ -35,7 +31,7 @@ public class AuthServiceTests
     {
         var user = new User { Id = 1, Name = "Test", Email = "test@test.com" };
 
-        var token = _sut.GenerateJwtToken(user, "Admin");
+        var token = _sut.GenerateJwtToken(user, "Admin", 101, "2024-25");
 
         token.Should().NotBeNullOrEmpty();
         // JWT tokens have 3 parts separated by dots
@@ -54,59 +50,23 @@ public class AuthServiceTests
     }
 
     [Fact]
-    public async Task ValidateRefreshTokenAsync_ExpiredToken_ReturnsFalse()
+    public void HashRefreshToken_SameInput_ReturnsSameHash()
     {
-        var expiredToken = new RefreshToken
-        {
-            Id = 1,
-            Token = "expired-token",
-            ExpiresAt = DateTime.UtcNow.AddDays(-1),
-            IsRevoked = false
-        };
+        var hash1 = _sut.HashRefreshToken("refresh-token");
+        var hash2 = _sut.HashRefreshToken("refresh-token");
 
-        _unitOfWorkMock.Setup(x => x.RefreshTokens.GetByTokenAsync("expired-token"))
-            .ReturnsAsync(expiredToken);
-
-        var result = await _sut.ValidateRefreshTokenAsync("expired-token");
-
-        result.Should().BeFalse();
+        hash1.Should().NotBeNullOrEmpty();
+        hash1.Should().Be(hash2);
     }
 
     [Fact]
-    public async Task ValidateRefreshTokenAsync_RevokedToken_ReturnsFalse()
+    public void HashRefreshToken_DifferentInput_ReturnsDifferentHash()
     {
-        var revokedToken = new RefreshToken
-        {
-            Id = 1,
-            Token = "revoked-token",
-            ExpiresAt = DateTime.UtcNow.AddDays(7),
-            IsRevoked = true
-        };
+        var hash1 = _sut.HashRefreshToken("refresh-token-1");
+        var hash2 = _sut.HashRefreshToken("refresh-token-2");
 
-        _unitOfWorkMock.Setup(x => x.RefreshTokens.GetByTokenAsync("revoked-token"))
-            .ReturnsAsync(revokedToken);
-
-        var result = await _sut.ValidateRefreshTokenAsync("revoked-token");
-
-        result.Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task ValidateRefreshTokenAsync_ValidToken_ReturnsTrue()
-    {
-        var validToken = new RefreshToken
-        {
-            Id = 1,
-            Token = "valid-token",
-            ExpiresAt = DateTime.UtcNow.AddDays(7),
-            IsRevoked = false
-        };
-
-        _unitOfWorkMock.Setup(x => x.RefreshTokens.GetByTokenAsync("valid-token"))
-            .ReturnsAsync(validToken);
-
-        var result = await _sut.ValidateRefreshTokenAsync("valid-token");
-
-        result.Should().BeTrue();
+        hash1.Should().NotBeNullOrEmpty();
+        hash2.Should().NotBeNullOrEmpty();
+        hash1.Should().NotBe(hash2);
     }
 }

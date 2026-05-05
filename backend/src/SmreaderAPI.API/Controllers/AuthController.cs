@@ -1,6 +1,9 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SmreaderAPI.Application.DTOs;
 using SmreaderAPI.Application.Interfaces;
+using SmreaderAPI.Application.Tenancy;
 
 namespace SmreaderAPI.API.Controllers;
 
@@ -39,6 +42,21 @@ public class AuthController : ControllerBase
         var result = await _userService.RefreshTokenAsync(dto);
         if (!result.Success)
             return Unauthorized(result);
+        return Ok(result);
+    }
+
+    [Authorize]
+    [HttpPost("switch-fy")]
+    public async Task<IActionResult> SwitchFinancialYear([FromBody] SwitchFinancialYearDto dto)
+    {
+        var userIdValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var tenantIdValue = User.FindFirstValue(TenantClaimTypes.TenantId);
+        if (!int.TryParse(userIdValue, out var userId) || !int.TryParse(tenantIdValue, out var tenantId))
+            return Unauthorized(ApiResponse<TokenResponseDto>.FailResponse("Invalid token claims."));
+
+        var result = await _userService.SwitchFinancialYearAsync(userId, tenantId, dto);
+        if (!result.Success)
+            return BadRequest(result);
         return Ok(result);
     }
 }

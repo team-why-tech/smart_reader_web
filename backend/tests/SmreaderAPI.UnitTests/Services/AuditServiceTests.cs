@@ -1,7 +1,9 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
+using SmreaderAPI.Application.Interfaces;
 using SmreaderAPI.Application.Services;
+using SmreaderAPI.Application.Tenancy;
 using SmreaderAPI.Domain.Entities;
 using SmreaderAPI.Domain.Interfaces;
 
@@ -10,14 +12,22 @@ namespace SmreaderAPI.UnitTests.Services;
 public class AuditServiceTests
 {
     private readonly Mock<IUnitOfWork> _unitOfWorkMock;
+    private readonly Mock<ITenantUnitOfWorkFactory> _unitOfWorkFactoryMock;
+    private readonly TenantContext _tenantContext;
     private readonly Mock<ILogger<AuditService>> _loggerMock;
     private readonly AuditService _sut;
 
     public AuditServiceTests()
     {
         _unitOfWorkMock = new Mock<IUnitOfWork>();
+        _unitOfWorkFactoryMock = new Mock<ITenantUnitOfWorkFactory>();
+        _tenantContext = new TenantContext();
         _loggerMock = new Mock<ILogger<AuditService>>();
-        _sut = new AuditService(_unitOfWorkMock.Object, _loggerMock.Object);
+
+        _tenantContext.Set(101, "2024-25", "Server=tenant-db;Database=TenantDb;");
+        _unitOfWorkFactoryMock.Setup(x => x.Create(It.IsAny<string>())).Returns(_unitOfWorkMock.Object);
+
+        _sut = new AuditService(_unitOfWorkFactoryMock.Object, _tenantContext, _loggerMock.Object);
     }
 
     [Fact]

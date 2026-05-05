@@ -8,6 +8,7 @@ using Serilog;
 using Serilog.Events;
 using SmreaderAPI.Application.Interfaces;
 using SmreaderAPI.Application.Services;
+using SmreaderAPI.Application.Tenancy;
 using SmreaderAPI.Domain.Interfaces;
 using SmreaderAPI.Infrastructure.Caching;
 using SmreaderAPI.Infrastructure.Data;
@@ -15,6 +16,7 @@ using SmreaderAPI.Infrastructure.Logging;
 using SmreaderAPI.Infrastructure.Services;
 using SmreaderAPI.Infrastructure.UnitOfWork;
 using SmreaderAPI.API.Middleware;
+using SmreaderAPI.Infrastructure.Repositories;
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
@@ -128,14 +130,25 @@ try
     });
 
     // Infrastructure
-    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")!;
+    builder.Services.AddScoped<TenantContext>();
+    builder.Services.AddSingleton<IMasterDbConnectionFactory, MasterDbConnectionFactory>();
+    builder.Services.AddScoped<ITenantDatabaseRepository, TenantDatabaseRepository>();
+    builder.Services.AddScoped<IMasterRefreshTokenRepository, MasterRefreshTokenRepository>();
+    builder.Services.AddScoped<ITenantConnectionResolver, TenantConnectionResolver>();
+    builder.Services.AddScoped<ITenantUnitOfWorkFactory, TenantUnitOfWorkFactory>();
 
-    builder.Services.AddDbContext<SmreaderDbContext>(options =>
-        options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 36)))
+    builder.Services.AddDbContext<SmreaderDbContext>((sp, options) =>
+    {
+        var tenantContext = sp.GetRequiredService<TenantContext>();
+        if (string.IsNullOrWhiteSpace(tenantContext.ConnectionString))
+            throw new InvalidOperationException("Tenant connection string is not set.");
+
+        options.UseMySql(tenantContext.ConnectionString, new MySqlServerVersion(new Version(8, 0, 36)))
                .EnableSensitiveDataLogging(builder.Environment.IsDevelopment())
-               .EnableDetailedErrors(builder.Environment.IsDevelopment()));
+               .EnableDetailedErrors(builder.Environment.IsDevelopment());
+    });
 
-    builder.Services.AddSingleton<DapperContext>();
+    builder.Services.AddScoped<DapperContext>();
     builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
     // Services
@@ -156,6 +169,7 @@ try
     app.UseIpRateLimiting();
     app.UseCors();
     app.UseAuthentication();
+    app.UseMiddleware<TenantResolutionMiddleware>();
     app.UseAuthorization();
 
     

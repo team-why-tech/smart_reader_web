@@ -5,23 +5,21 @@ using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 using SmreaderAPI.Application.Interfaces;
+using SmreaderAPI.Application.Tenancy;
 using SmreaderAPI.Domain.Entities;
-using SmreaderAPI.Domain.Interfaces;
 
 namespace SmreaderAPI.Infrastructure.Services;
 
 public class AuthService : IAuthService
 {
     private readonly IConfiguration _configuration;
-    private readonly IUnitOfWork _unitOfWork;
 
-    public AuthService(IConfiguration configuration, IUnitOfWork unitOfWork)
+    public AuthService(IConfiguration configuration)
     {
         _configuration = configuration;
-        _unitOfWork = unitOfWork;
     }
 
-    public string GenerateJwtToken(User user, string roleName)
+    public string GenerateJwtToken(User user, string roleName, int tenantId, string financialYear)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -32,7 +30,9 @@ public class AuthService : IAuthService
             new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new Claim(ClaimTypes.Email, user.Email),
             new Claim(ClaimTypes.Role, roleName),
-            new Claim(ClaimTypes.Name, user.Name)
+            new Claim(ClaimTypes.Name, user.Name),
+            new Claim(TenantClaimTypes.TenantId, tenantId.ToString()),
+            new Claim(TenantClaimTypes.FinancialYear, financialYear)
         };
 
         var token = new JwtSecurityToken(
@@ -54,10 +54,11 @@ public class AuthService : IAuthService
         return System.Convert.ToBase64String(randomBytes);
     }
 
-    public async Task<bool> ValidateRefreshTokenAsync(string token)
+    public string HashRefreshToken(string refreshToken)
     {
-        var refreshToken = await _unitOfWork.RefreshTokens.GetByTokenAsync(token);
-        return refreshToken is not null && !refreshToken.IsRevoked && refreshToken.ExpiresAt > DateTime.UtcNow;
+        using var sha = SHA256.Create();
+        var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(refreshToken));
+        return Convert.ToHexString(bytes);
     }
 
     public string HashPassword(string password)
