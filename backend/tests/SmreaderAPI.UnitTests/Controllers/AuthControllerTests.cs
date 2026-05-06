@@ -22,7 +22,7 @@ public class AuthControllerTests
     public async Task Register_Success_Returns201()
     {
         // Arrange
-        var dto = new RegisterDto("Test", "test@test.com", "Password123");
+        var dto = new RegisterDto("Test", "test@test.com", "Password123", "123", "Addr", 1);
         var tokenResponse = new TokenResponseDto("jwt", "refresh", DateTime.UtcNow.AddMinutes(30));
         _userServiceMock.Setup(x => x.RegisterAsync(dto))
             .ReturnsAsync(ApiResponse<TokenResponseDto>.SuccessResponse(tokenResponse, "Registration successful."));
@@ -39,7 +39,7 @@ public class AuthControllerTests
     public async Task Login_Success_Returns200()
     {
         // Arrange
-        var dto = new LoginDto("test@test.com", "Password123");
+        var dto = new LoginDto("test@test.com", "Password123", 1);
         var tokenResponse = new TokenResponseDto("jwt", "refresh", DateTime.UtcNow.AddMinutes(30));
         _userServiceMock.Setup(x => x.LoginAsync(dto))
             .ReturnsAsync(ApiResponse<TokenResponseDto>.SuccessResponse(tokenResponse));
@@ -56,7 +56,7 @@ public class AuthControllerTests
     public async Task Login_InvalidCredentials_Returns401()
     {
         // Arrange
-        var dto = new LoginDto("test@test.com", "WrongPassword");
+        var dto = new LoginDto("test@test.com", "WrongPassword", 1);
         _userServiceMock.Setup(x => x.LoginAsync(dto))
             .ReturnsAsync(ApiResponse<TokenResponseDto>.FailResponse("Invalid email or password."));
 

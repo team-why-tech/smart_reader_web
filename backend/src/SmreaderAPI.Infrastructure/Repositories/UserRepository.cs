@@ -15,9 +15,4 @@ public class UserRepository : GenericRepository<User>, IUserRepository
     {
         return await _dbSet.AsNoTracking().FirstOrDefaultAsync(u => u.Email == email);
     }
-
-    public async Task<IEnumerable<User>> GetByRoleAsync(int roleId)
-    {
-        return await _dbSet.AsNoTracking().Where(u => u.RoleId == roleId).ToListAsync();
-    }
 }

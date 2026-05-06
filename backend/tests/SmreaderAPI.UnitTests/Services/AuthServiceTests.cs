@@ -35,7 +35,7 @@ public class AuthServiceTests
     {
         var user = new User { Id = 1, Name = "Test", Email = "test@test.com" };
 
-        var token = _sut.GenerateJwtToken(user, "Admin");
+        var token = _sut.GenerateJwtToken(user, "Admin", 1);
 
         token.Should().NotBeNullOrEmpty();
         // JWT tokens have 3 parts separated by dots

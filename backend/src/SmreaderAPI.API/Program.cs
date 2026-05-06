@@ -128,14 +128,13 @@ try
     });
 
     // Infrastructure
-    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")!;
+    builder.Services.AddSingleton<IMasterDbConnectionFactory, MasterDbConnectionFactory>();
+    builder.Services.AddSingleton<TenantConnectionCacheService>();
+    builder.Services.AddScoped<ITenantContext, TenantContextService>();
 
-    builder.Services.AddDbContext<SmreaderDbContext>(options =>
-        options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 36)))
-               .EnableSensitiveDataLogging(builder.Environment.IsDevelopment())
-               .EnableDetailedErrors(builder.Environment.IsDevelopment()));
+    builder.Services.AddDbContext<SmreaderDbContext>();
 
-    builder.Services.AddSingleton<DapperContext>();
+    builder.Services.AddScoped<DapperContext>();
     builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
     // Services
@@ -156,6 +155,7 @@ try
     app.UseIpRateLimiting();
     app.UseCors();
     app.UseAuthentication();
+    app.UseMiddleware<TenantResolutionMiddleware>();
     app.UseAuthorization();
 
     
