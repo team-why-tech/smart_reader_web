@@ -21,7 +21,7 @@ public class AuthService : IAuthService
         _unitOfWork = unitOfWork;
     }
 
-    public string GenerateJwtToken(User user, string roleName)
+    public string GenerateJwtToken(User user, int tenantId)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -31,8 +31,8 @@ public class AuthService : IAuthService
         {
             new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new Claim(ClaimTypes.Email, user.Email),
-            new Claim(ClaimTypes.Role, roleName),
-            new Claim(ClaimTypes.Name, user.Name)
+            new Claim(ClaimTypes.Name, user.Name),
+            new Claim("tenant_id", tenantId.ToString())
         };
 
         var token = new JwtSecurityToken(

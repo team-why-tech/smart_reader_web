@@ -7,7 +7,7 @@ namespace SmreaderAPI.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "Admin")]
+[Authorize]
 public class AuditLogController : ControllerBase
 {
     private readonly IAuditService _auditService;

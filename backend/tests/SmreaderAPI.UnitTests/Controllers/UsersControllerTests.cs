@@ -24,7 +24,7 @@ public class UsersControllerTests
         // Arrange
         var users = new List<UserDto>
         {
-            new(1, "Test", "test@test.com", "User", true, DateTime.UtcNow)
+            new(1, "Test", "test@test.com", "1234567890", 1)
         };
         _userServiceMock.Setup(x => x.GetAllAsync())
             .ReturnsAsync(ApiResponse<IEnumerable<UserDto>>.SuccessResponse(users));
@@ -40,7 +40,7 @@ public class UsersControllerTests
     public async Task GetById_ExistingUser_ReturnsOk()
     {
         // Arrange
-        var user = new UserDto(1, "Test", "test@test.com", "User", true, DateTime.UtcNow);
+        var user = new UserDto(1, "Test", "test@test.com", "1234567890", 1);
         _userServiceMock.Setup(x => x.GetByIdAsync(1))
             .ReturnsAsync(ApiResponse<UserDto>.SuccessResponse(user));
 

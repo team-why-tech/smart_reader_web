@@ -16,7 +16,6 @@ public class UnitOfWork : IUnitOfWork
     private IDbContextTransaction? _efTransaction;
 
     private IUserRepository? _users;
-    private IRoleRepository? _roles;
     private IRefreshTokenRepository? _refreshTokens;
     private IAuditLogRepository? _auditLogs;
 
@@ -42,9 +41,6 @@ public class UnitOfWork : IUnitOfWork
     public IUserRepository Users =>
         _users ??= new UserRepository(_dbContext, Connection, _transaction);
 
-    public IRoleRepository Roles =>
-        _roles ??= new RoleRepository(_dbContext, Connection, _transaction);
-
     public IRefreshTokenRepository RefreshTokens =>
         _refreshTokens ??= new RefreshTokenRepository(_dbContext, Connection, _transaction);
 
@@ -66,7 +62,6 @@ public class UnitOfWork : IUnitOfWork
 
         // Reset repositories so they pick up the new transaction
         _users = null;
-        _roles = null;
         _refreshTokens = null;
         _auditLogs = null;
     }
