@@ -122,7 +122,7 @@ public class UserServiceTests
     public async Task GetByIdAsync_CacheHit_ReturnsCachedUser()
     {
         // Arrange
-        var cachedUser = new UserDto(1, "Test", "test@test.com", "1234567890", 1);
+        var cachedUser = new UserDto(1, "Test", "test@test.com", "1234567890", null, 0, 1, null, 0, DateTime.UtcNow, DateTime.MinValue, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, "");
         _cacheServiceMock.Setup(x => x.GetAsync<UserDto>("tenant:1:user:1")).ReturnsAsync(cachedUser);
 
         // Act

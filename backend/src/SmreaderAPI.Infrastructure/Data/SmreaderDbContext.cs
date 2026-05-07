@@ -39,7 +39,22 @@ public class SmreaderDbContext : DbContext
         {
             entity.ToTable("ca_users");
             entity.HasKey(e => e.Id);
+
+            // BaseEntity mappings
+            entity.Property(e => e.CreatedAt).HasColumnName("post_date");
+            entity.Ignore(e => e.UpdatedAt); // ca_users has no UpdatedAt column
+
+            // Explicit column mappings
             entity.Property(e => e.OwnerGuid).HasColumnName("owner_guid");
+            entity.Property(e => e.CategoryGuid).HasColumnName("category_guid");
+            entity.Property(e => e.LastSyncDate).HasColumnName("last_sync_date");
+            entity.Property(e => e.VanSale).HasColumnName("van_sale");
+            entity.Property(e => e.UserInactive).HasColumnName("user_inactive");
+            entity.Property(e => e.Panchayatname).HasColumnName("panchayatname");
+            entity.Property(e => e.Panchayatname1).HasColumnName("panchayatname1");
+            entity.Property(e => e.Panchayatname2).HasColumnName("panchayatname2");
+            entity.Property(e => e.Panchayatname3).HasColumnName("panchayatname3");
+            entity.Property(e => e.Panchayatname4).HasColumnName("panchayatname4");
         });
 
     }

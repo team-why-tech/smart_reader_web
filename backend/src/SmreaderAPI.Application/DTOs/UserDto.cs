@@ -1,5 +1,74 @@
 namespace SmreaderAPI.Application.DTOs;
 
-public record UserDto(int Id, string Name, string Email, string? Mobile, int Status);
-public record CreateUserDto(string Name, string Email, string Password, string? Mobile);
-public record UpdateUserDto(string? Name, string? Email, string? Mobile, int? Status);
+public record UserDto(
+    int Id,
+    string Name,
+    string Email,
+    string? Mobile,
+    string? Address,
+    int OwnerGuid,
+    int Status,
+    string? Privilages,
+    int CategoryGuid,
+    DateTime PostDate,
+    DateTime LastSyncDate,
+    int VanSale,
+    int Tech,
+    int UserInactive,
+    int CollectionAgent,
+    int SuperAdmin,
+    int Printertype,
+    int Moduletype,
+    int Billnumber,
+    int ReadBillnumber,
+    int Panchayatname,
+    int Panchayatname1,
+    int Panchayatname2,
+    int Panchayatname3,
+    int Panchayatname4,
+    string EmailCRM
+);
+
+public record CreateUserDto(
+    string Name,
+    string Email,
+    string Password,
+    string? Mobile,
+    string? Address,
+    int OwnerGuid = 0,
+    string? Privilages = null,
+    int CategoryGuid = 0,
+    int VanSale = 0,
+    int Tech = 0,
+    int CollectionAgent = 0,
+    int SuperAdmin = 0,
+    int Printertype = 0,
+    int Moduletype = 3,
+    string EmailCRM = ""
+);
+
+public record UpdateUserDto(
+    string? Name,
+    string? Email,
+    string? Mobile,
+    int? Status,
+    string? Address = null,
+    int? OwnerGuid = null,
+    string? Privilages = null,
+    int? CategoryGuid = null,
+    int? VanSale = null,
+    int? Tech = null,
+    int? UserInactive = null,
+    int? CollectionAgent = null,
+    int? SuperAdmin = null,
+    int? Printertype = null,
+    int? Moduletype = null,
+    int? Billnumber = null,
+    int? ReadBillnumber = null,
+    int? Panchayatname = null,
+    int? Panchayatname1 = null,
+    int? Panchayatname2 = null,
+    int? Panchayatname3 = null,
+    int? Panchayatname4 = null,
+    string? EmailCRM = null
+);

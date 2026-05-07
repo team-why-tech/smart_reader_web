@@ -10,7 +10,28 @@ public static class MappingExtensions
         user.Name,
         user.Email,
         user.Mobile,
-        user.Status
+        user.Address,
+        user.OwnerGuid,
+        user.Status,
+        user.Privilages,
+        user.CategoryGuid,
+        user.CreatedAt,
+        user.LastSyncDate,
+        user.VanSale,
+        user.Tech,
+        user.UserInactive,
+        user.CollectionAgent,
+        user.SuperAdmin,
+        user.Printertype,
+        user.Moduletype,
+        user.Billnumber,
+        user.ReadBillnumber,
+        user.Panchayatname,
+        user.Panchayatname1,
+        user.Panchayatname2,
+        user.Panchayatname3,
+        user.Panchayatname4,
+        user.EmailCRM
     );
 
     public static AuditLogDto ToDto(this AuditLog log) => new(
