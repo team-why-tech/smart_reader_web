@@ -140,10 +140,12 @@ try
     builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
     builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
 
-    // EF Core — No fixed connection string; set dynamically via ITenantContext in OnConfiguring
+    // EF Core — Initialized with Master connection string to configure the MySQL provider.
+    // The connection string is dynamically swapped per-request in the DbContext constructor.
     builder.Services.AddDbContext<SmreaderDbContext>(options =>
     {
-        // Base configuration only — connection string injected per-request by SmreaderDbContext.OnConfiguring
+        var defaultConnStr = builder.Configuration.GetConnectionString("DefaultConnection");
+        options.UseMySql(defaultConnStr, new MySqlServerVersion(new Version(8, 0, 36)));
     }, ServiceLifetime.Scoped);
 
     // Services

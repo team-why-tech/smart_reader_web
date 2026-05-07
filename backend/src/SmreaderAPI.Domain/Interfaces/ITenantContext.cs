@@ -8,5 +8,6 @@ public interface ITenantContext
     int TenantId { get; }
     string ConnectionString { get; }
     bool IsResolved { get; }
+    event Action<string>? OnTenantResolved;
     void Set(int tenantId, string connectionString);
 }

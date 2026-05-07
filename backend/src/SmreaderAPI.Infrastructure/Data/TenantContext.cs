@@ -11,11 +11,14 @@ public class TenantContext : ITenantContext
     public int TenantId { get; private set; }
     public string ConnectionString { get; private set; } = string.Empty;
     public bool IsResolved { get; private set; }
+    
+    public event Action<string>? OnTenantResolved;
 
     public void Set(int tenantId, string connectionString)
     {
         TenantId = tenantId;
         ConnectionString = connectionString;
         IsResolved = true;
+        OnTenantResolved?.Invoke(connectionString);
     }
 }

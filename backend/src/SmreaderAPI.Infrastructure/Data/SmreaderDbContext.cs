@@ -16,21 +16,23 @@ public class SmreaderDbContext : DbContext
         : base(options)
     {
         _tenantContext = tenantContext;
+        if (_tenantContext.IsResolved && !string.IsNullOrEmpty(_tenantContext.ConnectionString))
+        {
+            Database.SetConnectionString(_tenantContext.ConnectionString);
+        }
+        else
+        {
+            // For endpoints like /auth/login where DbContext is injected before the tenant is resolved manually
+            _tenantContext.OnTenantResolved += (connStr) => 
+            {
+                Database.SetConnectionString(connStr);
+            };
+        }
     }
 
     public DbSet<User> Users => Set<User>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
-    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-    {
-        // Dynamically switch to the tenant database if resolved
-        if (_tenantContext.IsResolved && !string.IsNullOrEmpty(_tenantContext.ConnectionString))
-        {
-            optionsBuilder.UseMySql(
-                _tenantContext.ConnectionString,
-                new MySqlServerVersion(new Version(8, 0, 36)));
-        }
-    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
