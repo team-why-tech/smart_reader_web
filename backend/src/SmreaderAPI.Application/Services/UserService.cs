@@ -11,6 +11,7 @@ public class UserService : IUserService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAuthService _authService;
+    private readonly IRefreshTokenRepository _refreshTokenRepo;
     private readonly ICacheService _cacheService;
     private readonly IAuditService _auditService;
     private readonly ITenantContext _tenantContext;
@@ -19,6 +20,7 @@ public class UserService : IUserService
     public UserService(
         IUnitOfWork unitOfWork,
         IAuthService authService,
+        IRefreshTokenRepository refreshTokenRepo,
         ICacheService cacheService,
         IAuditService auditService,
         ITenantContext tenantContext,
@@ -26,6 +28,7 @@ public class UserService : IUserService
     {
         _unitOfWork = unitOfWork;
         _authService = authService;
+        _refreshTokenRepo = refreshTokenRepo;
         _cacheService = cacheService;
         _auditService = auditService;
         _tenantContext = tenantContext;
@@ -34,8 +37,6 @@ public class UserService : IUserService
 
     public async Task<ApiResponse<TokenResponseDto>> LoginAsync(TenantLoginDto dto)
     {
-        // At this point, ITenantContext is already resolved by the controller
-        // which manually resolved it before calling this method
         var user = await _unitOfWork.Users.GetByEmailAsync(dto.Email);
         if (user is null || !_authService.VerifyPassword(dto.Password, user.Pwd))
             return ApiResponse<TokenResponseDto>.FailResponse("Invalid email or password.");
@@ -48,12 +49,13 @@ public class UserService : IUserService
 
         var refreshToken = new RefreshToken
         {
+            TenantId = dto.TenantId,
             UserId = user.Id,
             Token = refreshTokenValue,
             ExpiresAt = DateTime.UtcNow.AddDays(7),
             CreatedAt = DateTime.UtcNow
         };
-        await _unitOfWork.RefreshTokens.AddAsync(refreshToken);
+        await _refreshTokenRepo.AddAsync(refreshToken);
 
         await _auditService.LogActionAsync(user.Id, "Login", "User", user.Id);
 
@@ -66,11 +68,11 @@ public class UserService : IUserService
 
     public async Task<ApiResponse<TokenResponseDto>> RefreshTokenAsync(RefreshTokenRequestDto dto)
     {
-        var existingToken = await _unitOfWork.RefreshTokens.GetByTokenAsync(dto.RefreshToken);
+        var existingToken = await _refreshTokenRepo.GetByTokenAsync(dto.RefreshToken);
         if (existingToken is null || existingToken.IsRevoked || existingToken.ExpiresAt <= DateTime.UtcNow)
             return ApiResponse<TokenResponseDto>.FailResponse("Invalid or expired refresh token.");
 
-        await _unitOfWork.RefreshTokens.RevokeTokenAsync(existingToken.Id);
+        await _refreshTokenRepo.RevokeTokenAsync(existingToken.Id);
 
         var user = await _unitOfWork.Users.GetByIdAsync(existingToken.UserId);
         if (user is null)
@@ -81,12 +83,13 @@ public class UserService : IUserService
 
         var newRefreshToken = new RefreshToken
         {
+            TenantId = _tenantContext.TenantId,
             UserId = user.Id,
             Token = newRefreshTokenValue,
             ExpiresAt = DateTime.UtcNow.AddDays(7),
             CreatedAt = DateTime.UtcNow
         };
-        await _unitOfWork.RefreshTokens.AddAsync(newRefreshToken);
+        await _refreshTokenRepo.AddAsync(newRefreshToken);
 
         return ApiResponse<TokenResponseDto>.SuccessResponse(
             new TokenResponseDto(accessToken, newRefreshTokenValue, DateTime.UtcNow.AddMinutes(30)),

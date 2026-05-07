@@ -13,12 +13,12 @@ namespace SmreaderAPI.Infrastructure.Services;
 public class AuthService : IAuthService
 {
     private readonly IConfiguration _configuration;
-    private readonly IUnitOfWork _unitOfWork;
+    private readonly IRefreshTokenRepository _refreshTokenRepo;
 
-    public AuthService(IConfiguration configuration, IUnitOfWork unitOfWork)
+    public AuthService(IConfiguration configuration, IRefreshTokenRepository refreshTokenRepo)
     {
         _configuration = configuration;
-        _unitOfWork = unitOfWork;
+        _refreshTokenRepo = refreshTokenRepo;
     }
 
     public string GenerateJwtToken(User user, int tenantId)
@@ -56,7 +56,7 @@ public class AuthService : IAuthService
 
     public async Task<bool> ValidateRefreshTokenAsync(string token)
     {
-        var refreshToken = await _unitOfWork.RefreshTokens.GetByTokenAsync(token);
+        var refreshToken = await _refreshTokenRepo.GetByTokenAsync(token);
         return refreshToken is not null && !refreshToken.IsRevoked && refreshToken.ExpiresAt > DateTime.UtcNow;
     }
 

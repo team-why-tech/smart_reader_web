@@ -13,6 +13,7 @@ public class UserServiceTests
 {
     private readonly Mock<IUnitOfWork> _unitOfWorkMock;
     private readonly Mock<IAuthService> _authServiceMock;
+    private readonly Mock<IRefreshTokenRepository> _refreshTokenRepoMock;
     private readonly Mock<ICacheService> _cacheServiceMock;
     private readonly Mock<IAuditService> _auditServiceMock;
     private readonly Mock<ITenantContext> _tenantContextMock;
@@ -23,6 +24,7 @@ public class UserServiceTests
     {
         _unitOfWorkMock = new Mock<IUnitOfWork>();
         _authServiceMock = new Mock<IAuthService>();
+        _refreshTokenRepoMock = new Mock<IRefreshTokenRepository>();
         _cacheServiceMock = new Mock<ICacheService>();
         _auditServiceMock = new Mock<IAuditService>();
         _tenantContextMock = new Mock<ITenantContext>();
@@ -34,6 +36,7 @@ public class UserServiceTests
         _sut = new UserService(
             _unitOfWorkMock.Object,
             _authServiceMock.Object,
+            _refreshTokenRepoMock.Object,
             _cacheServiceMock.Object,
             _auditServiceMock.Object,
             _tenantContextMock.Object,
@@ -48,7 +51,7 @@ public class UserServiceTests
         var user = new User { Id = 1, Email = dto.Email, Pwd = "hashed", Name = "Test", Status = 1 };
 
         _unitOfWorkMock.Setup(x => x.Users.GetByEmailAsync(dto.Email)).ReturnsAsync(user);
-        _unitOfWorkMock.Setup(x => x.RefreshTokens.AddAsync(It.IsAny<RefreshToken>())).ReturnsAsync(1);
+        _refreshTokenRepoMock.Setup(x => x.AddAsync(It.IsAny<RefreshToken>())).ReturnsAsync(1);
         _authServiceMock.Setup(x => x.VerifyPassword("Password123", "hashed")).Returns(true);
         _authServiceMock.Setup(x => x.GenerateJwtToken(user, 1)).Returns("jwt-token");
         _authServiceMock.Setup(x => x.GenerateRefreshToken()).Returns("refresh-token");
@@ -59,6 +62,7 @@ public class UserServiceTests
         // Assert
         result.Success.Should().BeTrue();
         result.Data!.AccessToken.Should().Be("jwt-token");
+        _refreshTokenRepoMock.Verify(x => x.AddAsync(It.Is<RefreshToken>(rt => rt.TenantId == 1)), Times.Once);
     }
 
     [Fact]

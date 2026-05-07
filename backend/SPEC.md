@@ -23,8 +23,8 @@
 
 The system uses a **Master DB + Tenant DB** pattern:
 
-- **Master DB** (`smreader_master`): Contains `ca_management` table mapping tenants to their database credentials and financial year periods.
-- **Tenant DBs** (e.g. `smreader_kadanad`): Per-tenant databases containing `ca_users`, `ca_refresh_tokens`, and `AuditLogs`. Split by financial year — the system always selects the latest FY database.
+- **Master DB** (`smreader_master`): Contains `ca_management` (tenant registry) and `ca_refresh_tokens` (JWT refresh tokens scoped by tenant_id).
+- **Tenant DBs** (e.g. `smreader_kadanad`): Per-tenant databases containing `ca_users` and `AuditLogs`. Split by financial year — the system always selects the latest FY database.
 
 ### 1.2 Request Flow
 
@@ -197,12 +197,13 @@ public abstract class BaseEntity
 | `OwnerGuid` | `int`     | `owner_guid` | Default: 0             |
 | `Status`    | `int`     | `status`     | 0=inactive, 1=active   |
 
-#### RefreshToken (Tenant DB — `ca_refresh_tokens`)
+#### RefreshToken (Master DB — `ca_refresh_tokens`)
 
 | Property    | Type        | Column       | Constraints            |
 | ----------- | ----------- | ------------ | ---------------------- |
 | `Id`        | `int`       | `id`         | PK, auto-increment     |
-| `UserId`    | `int`       | `user_id`    | FK → ca_users.id       |
+| `TenantId`  | `int`       | `tenant_id`  | Required               |
+| `UserId`    | `int`       | `user_id`    | User ID in tenant DB   |
 | `Token`     | `string`    | `token`      | Required, indexed      |
 | `ExpiresAt` | `DateTime`  | `expires_at` | Required               |
 | `CreatedAt` | `DateTime`  | `created_at` | Default: UTC now       |
@@ -232,6 +233,18 @@ public interface ITenantContext
     string ConnectionString { get; }
     bool IsResolved { get; }
     void Set(int tenantId, string connectionString);
+}
+```
+
+#### IRefreshTokenRepository (standalone — Master DB)
+
+```csharp
+public interface IRefreshTokenRepository
+{
+    Task<RefreshToken?> GetByTokenAsync(string token);
+    Task<int> AddAsync(RefreshToken refreshToken);
+    Task RevokeTokenAsync(int id);
+    Task<IEnumerable<RefreshToken>> GetActiveTokensByUserAsync(int tenantId, int userId);
 }
 ```
 
@@ -267,16 +280,17 @@ public interface IRepository<T> where T : BaseEntity
 | Interface                  | Additional Methods                                |
 | -------------------------- | ------------------------------------------------- |
 | `IUserRepository`          | `GetByEmailAsync(email)`, `GetByMobileAsync(mobile)` |
-| `IRefreshTokenRepository`  | `GetByTokenAsync(token)`, `RevokeTokenAsync(id)`, `GetActiveTokensByUserAsync(userId)` |
 | `IAuditLogRepository`      | `GetByEntityAsync(entityName, entityId)`, `GetByUserIdAsync(userId)` |
 
-#### IUnitOfWork
+> [!NOTE]
+> `IRefreshTokenRepository` is standalone (not part of `IUnitOfWork`) since it operates on the Master DB.
+
+#### IUnitOfWork (tenant-scoped)
 
 ```csharp
 public interface IUnitOfWork : IDisposable
 {
     IUserRepository Users { get; }
-    IRefreshTokenRepository RefreshTokens { get; }
     IAuditLogRepository AuditLogs { get; }
     Task BeginTransactionAsync();
     Task CommitAsync();
@@ -396,13 +410,20 @@ public class DapperContext
 - Key format: `tenant_conn:{tenantId}`
 - **Singleton** lifetime
 
-### 5.5 TenantRepository
+### 5.5 RefreshTokenRepository (Master DB)
+
+- Standalone Dapper repository using `CreateMasterConnection()`
+- Not part of `GenericRepository<T>` or `IUnitOfWork`
+- All queries include `tenant_id` for cross-tenant isolation
+- Injected directly into `UserService` and `AuthService`
+
+### 5.6 TenantRepository
 
 - Queries Master DB via Dapper (uses `CreateMasterConnection()`)
 - `GetLatestByIdAsync()`: Returns tenant with latest `date_to` (latest FY)
 - Explicit SQL column aliasing for ca_management
 
-### 5.6 AuthService
+### 5.7 AuthService
 
 **JWT Claims:**
 
@@ -415,7 +436,7 @@ public class DapperContext
 
 **Password Hashing:** BCrypt with work factor 12.
 
-### 5.7 CacheService
+### 5.8 CacheService
 
 ```
 Request → L1 (IMemoryCache, 5 min TTL)
@@ -472,7 +493,8 @@ Request → L1 (IMemoryCache, 5 min TTL)
 | `ITenantRepository`            | Scoped    | `TenantRepository`           |
 | `DapperContext`                | Scoped    | `DapperContext`              |
 | `SmreaderDbContext`            | Scoped    | `SmreaderDbContext`          |
-| `IUnitOfWork`                  | Scoped    | `UnitOfWork`                 |
+| `IUnitOfWork`                  | Scoped    | `UnitOfWork` (tenant-scoped) |
+| `IRefreshTokenRepository`      | Scoped    | `RefreshTokenRepository` (Master DB) |
 | `IUserService`                 | Scoped    | `UserService`                |
 | `IAuthService`                 | Scoped    | `AuthService`                |
 | `IAuditService`                | Scoped    | `AuditService`               |
@@ -498,6 +520,22 @@ CREATE TABLE `ca_management` (
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 ```
 
+-- Refresh tokens (in Master DB, scoped by tenant_id)
+CREATE TABLE IF NOT EXISTS `ca_refresh_tokens` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `tenant_id` int(11) NOT NULL,
+  `user_id` int(11) NOT NULL,
+  `token` varchar(512) NOT NULL,
+  `expires_at` datetime NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `revoked_at` datetime DEFAULT NULL,
+  `is_revoked` tinyint(1) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  INDEX `IX_RefreshTokens_Token` (`token`),
+  INDEX `IX_RefreshTokens_Tenant_User` (`tenant_id`, `user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+```
+
 ### 7.2 Tenant Database (e.g. `smreader_kadanad`)
 
 ```sql
@@ -515,21 +553,6 @@ CREATE TABLE `ca_users` (
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 -- Created by init.sql
-CREATE TABLE `ca_refresh_tokens` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `user_id` int(11) NOT NULL,
-  `token` varchar(512) NOT NULL,
-  `expires_at` datetime NOT NULL,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `revoked_at` datetime DEFAULT NULL,
-  `is_revoked` tinyint(1) NOT NULL DEFAULT 0,
-  `updated_at` datetime DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  INDEX `IX_RefreshTokens_Token` (`token`),
-  CONSTRAINT `FK_RefreshTokens_Users` FOREIGN KEY (`user_id`)
-    REFERENCES `ca_users`(`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
-
 CREATE TABLE `AuditLogs` (
   `Id` int(11) NOT NULL AUTO_INCREMENT,
   `UserId` int(11) DEFAULT NULL,
@@ -596,7 +619,7 @@ CREATE TABLE `AuditLogs` (
 | SQL Injection      | Parameterized queries (Dapper + EF Core)                        |
 | Password Storage   | BCrypt with work factor 12                                      |
 | JWT                | HMAC-SHA256, 30-min access tokens, tenant_id claim              |
-| Refresh Tokens     | Cryptographically random, stored per tenant DB, rotated on use  |
+| Refresh Tokens     | Cryptographically random, stored in Master DB with tenant_id, rotated on use |
 | Tenant Isolation   | Per-request connection switching, tenant-scoped cache keys      |
 | CORS               | Production: restricted origins                                  |
 | Rate Limiting      | IP-based, strict on auth endpoints                              |

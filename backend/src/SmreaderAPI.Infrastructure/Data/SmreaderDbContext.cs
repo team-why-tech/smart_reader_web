@@ -19,7 +19,6 @@ public class SmreaderDbContext : DbContext
     }
 
     public DbSet<User> Users => Set<User>();
-    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
@@ -43,15 +42,5 @@ public class SmreaderDbContext : DbContext
             entity.Property(e => e.OwnerGuid).HasColumnName("owner_guid");
         });
 
-        // ca_refresh_tokens column mapping
-        modelBuilder.Entity<RefreshToken>(entity =>
-        {
-            entity.ToTable("ca_refresh_tokens");
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.UserId).HasColumnName("user_id");
-            entity.Property(e => e.ExpiresAt).HasColumnName("expires_at");
-            entity.Property(e => e.RevokedAt).HasColumnName("revoked_at");
-            entity.Property(e => e.IsRevoked).HasColumnName("is_revoked");
-        });
     }
 }

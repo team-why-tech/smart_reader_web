@@ -137,6 +137,7 @@ try
     // Infrastructure — Scoped because DapperContext depends on ITenantContext
     builder.Services.AddScoped<DapperContext>();
     builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+    builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
 
     // EF Core — No fixed connection string; set dynamically via ITenantContext in OnConfiguring
     builder.Services.AddDbContext<SmreaderDbContext>(options =>

@@ -16,7 +16,6 @@ public class UnitOfWork : IUnitOfWork
     private IDbContextTransaction? _efTransaction;
 
     private IUserRepository? _users;
-    private IRefreshTokenRepository? _refreshTokens;
     private IAuditLogRepository? _auditLogs;
 
     public UnitOfWork(SmreaderDbContext dbContext, DapperContext dapperContext)
@@ -41,9 +40,6 @@ public class UnitOfWork : IUnitOfWork
     public IUserRepository Users =>
         _users ??= new UserRepository(_dbContext, Connection, _transaction);
 
-    public IRefreshTokenRepository RefreshTokens =>
-        _refreshTokens ??= new RefreshTokenRepository(_dbContext, Connection, _transaction);
-
     public IAuditLogRepository AuditLogs =>
         _auditLogs ??= new AuditLogRepository(_dbContext, Connection, _transaction);
 
@@ -62,7 +58,6 @@ public class UnitOfWork : IUnitOfWork
 
         // Reset repositories so they pick up the new transaction
         _users = null;
-        _refreshTokens = null;
         _auditLogs = null;
     }
 
