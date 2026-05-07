@@ -27,17 +27,17 @@ public class ExpressionToSqlConverterTests
     [Fact]
     public void Convert_AndExpression_GeneratesCorrectSql()
     {
-        var (whereClause, parameters) = ExpressionToSqlConverter.Convert<User>(x => x.IsActive && x.RoleId == 1);
+        var (whereClause, parameters) = ExpressionToSqlConverter.Convert<User>(x => x.Status == 1 && x.OwnerGuid == 1);
 
-        whereClause.Should().Be("WHERE (IsActive = @p0) AND (RoleId = @p1)");
+        whereClause.Should().Be("WHERE (Status = @p0) AND (OwnerGuid = @p1)");
     }
 
     [Fact]
     public void Convert_OrExpression_GeneratesCorrectSql()
     {
-        var (whereClause, _) = ExpressionToSqlConverter.Convert<User>(x => x.RoleId == 1 || x.RoleId == 2);
+        var (whereClause, _) = ExpressionToSqlConverter.Convert<User>(x => x.Status == 1 || x.Status == 0);
 
-        whereClause.Should().Be("WHERE (RoleId = @p0) OR (RoleId = @p1)");
+        whereClause.Should().Be("WHERE (Status = @p0) OR (Status = @p1)");
     }
 
     [Fact]
@@ -89,13 +89,5 @@ public class ExpressionToSqlConverterTests
         var (whereClause, _) = ExpressionToSqlConverter.Convert<User>(x => x.Id > 5);
 
         whereClause.Should().Be("WHERE Id > @p0");
-    }
-
-    [Fact]
-    public void Convert_BooleanMember_GeneratesCorrectSql()
-    {
-        var (whereClause, _) = ExpressionToSqlConverter.Convert<User>(x => x.IsActive);
-
-        whereClause.Should().Be("WHERE IsActive = @p0");
     }
 }

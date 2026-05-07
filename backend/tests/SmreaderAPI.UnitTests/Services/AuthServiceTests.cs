@@ -10,7 +10,7 @@ namespace SmreaderAPI.UnitTests.Services;
 public class AuthServiceTests
 {
     private readonly AuthService _sut;
-    private readonly Mock<IUnitOfWork> _unitOfWorkMock;
+    private readonly Mock<IRefreshTokenRepository> _refreshTokenRepoMock;
 
     public AuthServiceTests()
     {
@@ -26,8 +26,8 @@ public class AuthServiceTests
             .AddInMemoryCollection(configData)
             .Build();
 
-        _unitOfWorkMock = new Mock<IUnitOfWork>();
-        _sut = new AuthService(configuration, _unitOfWorkMock.Object);
+        _refreshTokenRepoMock = new Mock<IRefreshTokenRepository>();
+        _sut = new AuthService(configuration, _refreshTokenRepoMock.Object);
     }
 
     [Fact]
@@ -35,10 +35,9 @@ public class AuthServiceTests
     {
         var user = new User { Id = 1, Name = "Test", Email = "test@test.com" };
 
-        var token = _sut.GenerateJwtToken(user, "Admin");
+        var token = _sut.GenerateJwtToken(user, 1);
 
         token.Should().NotBeNullOrEmpty();
-        // JWT tokens have 3 parts separated by dots
         token.Split('.').Should().HaveCount(3);
     }
 
@@ -64,7 +63,7 @@ public class AuthServiceTests
             IsRevoked = false
         };
 
-        _unitOfWorkMock.Setup(x => x.RefreshTokens.GetByTokenAsync("expired-token"))
+        _refreshTokenRepoMock.Setup(x => x.GetByTokenAsync("expired-token"))
             .ReturnsAsync(expiredToken);
 
         var result = await _sut.ValidateRefreshTokenAsync("expired-token");
@@ -83,7 +82,7 @@ public class AuthServiceTests
             IsRevoked = true
         };
 
-        _unitOfWorkMock.Setup(x => x.RefreshTokens.GetByTokenAsync("revoked-token"))
+        _refreshTokenRepoMock.Setup(x => x.GetByTokenAsync("revoked-token"))
             .ReturnsAsync(revokedToken);
 
         var result = await _sut.ValidateRefreshTokenAsync("revoked-token");
@@ -102,7 +101,7 @@ public class AuthServiceTests
             IsRevoked = false
         };
 
-        _unitOfWorkMock.Setup(x => x.RefreshTokens.GetByTokenAsync("valid-token"))
+        _refreshTokenRepoMock.Setup(x => x.GetByTokenAsync("valid-token"))
             .ReturnsAsync(validToken);
 
         var result = await _sut.ValidateRefreshTokenAsync("valid-token");

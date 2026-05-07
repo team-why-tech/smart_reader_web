@@ -12,6 +12,7 @@ using SmreaderAPI.Domain.Interfaces;
 using SmreaderAPI.Infrastructure.Caching;
 using SmreaderAPI.Infrastructure.Data;
 using SmreaderAPI.Infrastructure.Logging;
+using SmreaderAPI.Infrastructure.Repositories;
 using SmreaderAPI.Infrastructure.Services;
 using SmreaderAPI.Infrastructure.UnitOfWork;
 using SmreaderAPI.API.Middleware;
@@ -52,11 +53,12 @@ try
         c.SwaggerDoc("v1", new OpenApiInfo { Title = "SmreaderAPI", Version = "v1" });
         c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
         {
-            Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token.",
+            Description = "JWT Authorization header using the Bearer scheme. Just paste your token below.",
             Name = "Authorization",
             In = ParameterLocation.Header,
-            Type = SecuritySchemeType.ApiKey,
-            Scheme = "Bearer"
+            Type = SecuritySchemeType.Http,
+            Scheme = "bearer",
+            BearerFormat = "JWT"
         });
         c.AddSecurityRequirement(new OpenApiSecurityRequirement
         {
@@ -127,16 +129,22 @@ try
         options.InstanceName = "SmreaderAPI:";
     });
 
-    // Infrastructure
-    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")!;
+    // ─── Multi-Tenancy ───────────────────────────────────────────────
+    builder.Services.AddScoped<ITenantContext, TenantContext>();
+    builder.Services.AddSingleton<TenantConnectionStringBuilder>();
+    builder.Services.AddSingleton<TenantConnectionStringCache>();
+    builder.Services.AddScoped<ITenantRepository, TenantRepository>();
 
-    builder.Services.AddDbContext<SmreaderDbContext>(options =>
-        options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 36)))
-               .EnableSensitiveDataLogging(builder.Environment.IsDevelopment())
-               .EnableDetailedErrors(builder.Environment.IsDevelopment()));
-
-    builder.Services.AddSingleton<DapperContext>();
+    // Infrastructure — Scoped because DapperContext depends on ITenantContext
+    builder.Services.AddScoped<DapperContext>();
     builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+    builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+
+    // EF Core — No fixed connection string; set dynamically via ITenantContext in OnConfiguring
+    builder.Services.AddDbContext<SmreaderDbContext>(options =>
+    {
+        // Base configuration only — connection string injected per-request by SmreaderDbContext.OnConfiguring
+    }, ServiceLifetime.Scoped);
 
     // Services
     builder.Services.AddScoped<IUserService, UserService>();
@@ -156,6 +164,7 @@ try
     app.UseIpRateLimiting();
     app.UseCors();
     app.UseAuthentication();
+    app.UseMiddleware<TenantResolutionMiddleware>();
     app.UseAuthorization();
 
     
